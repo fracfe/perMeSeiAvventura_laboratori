@@ -1,0 +1,145 @@
+{% extends "admin.html" %}
+
+{% block corpo %}
+
+<main class="container py-4">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ category }}" role="alert">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
+    <h1 class="h3 mb-0">Gestione dati</h1>
+    <a class="btn btn-outline-secondary" href="{{ url_for("import_iscritti") }}">
+      Torna alla console amministrativa
+    </a>
+  </div>
+  <div class="alert alert-danger" role="alert">
+    <strong>Attenzione:</strong> queste operazioni cancellano definitivamente i dati indicati.
+    Non è disponibile un ripristino automatico.
+  </div>
+
+  <div class="row g-4">
+    <section class="col-12 col-xl-4" aria-labelledby="reset-iscrizioni-titolo">
+      <div class="card h-100 border-danger shadow-sm">
+        <div class="card-body d-flex flex-column">
+          <h2 class="h4 card-title" id="reset-iscrizioni-titolo">Reset iscrizioni</h2>
+          <p class="card-text">
+            Cancella tutte le scelte dei laboratori registrate. Partecipanti e laboratori
+            rimarranno disponibili.
+          </p>
+          <form class="mt-auto" method="post" action="{{ url_for("reset_iscrizioni") }}">
+            <div class="mb-3">
+              <label class="form-label" for="password-reset-iscrizioni">Password attuale admin</label>
+              <input
+                class="form-control"
+                id="password-reset-iscrizioni"
+                name="password_attuale"
+                type="password"
+                autocomplete="current-password"
+                required
+              >
+            </div>
+            <div class="form-check mb-3">
+              <input
+                class="form-check-input"
+                id="conferma-reset-iscrizioni"
+                name="conferma"
+                type="checkbox"
+                value="iscrizioni"
+                required
+              >
+              <label class="form-check-label" for="conferma-reset-iscrizioni">
+                Confermo di voler cancellare tutte le iscrizioni.
+              </label>
+            </div>
+            <button class="btn btn-danger" type="submit">Conferma reset iscrizioni</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <section class="col-12 col-xl-4" aria-labelledby="reset-partecipanti-titolo">
+      <div class="card h-100 border-danger shadow-sm">
+        <div class="card-body d-flex flex-column">
+          <h2 class="h4 card-title" id="reset-partecipanti-titolo">Reset partecipanti</h2>
+          <p class="card-text">
+            Cancella tutti i partecipanti importati. I laboratori non verranno modificati.
+            Se esistono iscrizioni, esegui prima il reset delle iscrizioni.
+          </p>
+          <form class="mt-auto" method="post" action="{{ url_for("reset_partecipanti") }}">
+            <div class="mb-3">
+              <label class="form-label" for="password-reset-partecipanti">Password attuale admin</label>
+              <input
+                class="form-control"
+                id="password-reset-partecipanti"
+                name="password_attuale"
+                type="password"
+                autocomplete="current-password"
+                required
+              >
+            </div>
+            <div class="form-check mb-3">
+              <input
+                class="form-check-input"
+                id="conferma-reset-partecipanti"
+                name="conferma"
+                type="checkbox"
+                value="partecipanti"
+                required
+              >
+              <label class="form-check-label" for="conferma-reset-partecipanti">
+                Confermo di voler cancellare tutti i partecipanti.
+              </label>
+            </div>
+            <button class="btn btn-danger" type="submit">Conferma reset partecipanti</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <section class="col-12 col-xl-4" aria-labelledby="reset-laboratori-titolo">
+      <div class="card h-100 border-danger shadow-sm">
+        <div class="card-body d-flex flex-column">
+          <h2 class="h4 card-title" id="reset-laboratori-titolo">Reset laboratori</h2>
+          <p class="card-text">
+            Cancella tutti i laboratori importati. I partecipanti non verranno modificati.
+            Se esistono iscrizioni, esegui prima il reset delle iscrizioni.
+          </p>
+          <form class="mt-auto" method="post" action="{{ url_for("reset_laboratori") }}">
+            <div class="mb-3">
+              <label class="form-label" for="password-reset-laboratori">Password attuale admin</label>
+              <input
+                class="form-control"
+                id="password-reset-laboratori"
+                name="password_attuale"
+                type="password"
+                autocomplete="current-password"
+                required
+              >
+            </div>
+            <div class="form-check mb-3">
+              <input
+                class="form-check-input"
+                id="conferma-reset-laboratori"
+                name="conferma"
+                type="checkbox"
+                value="laboratori"
+                required
+              >
+              <label class="form-check-label" for="conferma-reset-laboratori">
+                Confermo di voler cancellare tutti i laboratori.
+              </label>
+            </div>
+            <button class="btn btn-danger" type="submit">Conferma reset laboratori</button>
+          </form>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+{% endblock %}
