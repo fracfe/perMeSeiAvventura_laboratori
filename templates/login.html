@@ -8,6 +8,9 @@
     <title>PerMeSeiAvventura Laboratori</title>
   </head>
   <body>
+    <div class="container pt-3">
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for("index") }}">Home</a>
+    </div>
     <main class="form-signin w-100 m-auto">
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}

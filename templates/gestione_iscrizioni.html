@@ -1,0 +1,143 @@
+{% extends "admin.html" %}
+
+{% block corpo %}
+
+<div class="mx-5">
+  <ul class="nav nav-pills nav-fill">
+    <li class="nav-item">
+      <a class="nav-link" href="{{ url_for("import_iscritti") }}">Import Iscritti BC</a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link" href="{{ url_for("import_laboratori") }}">Import Laboratori</a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link" href="{{ url_for("stato_iscrizioni") }}">Stato Iscrizioni</a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link active" aria-current="page" href="{{ url_for("gestione_iscrizioni") }}">Gestione Iscrizioni</a>
+    </li>
+  </ul>
+</div>
+
+<main class="container-fluid px-5 py-4">
+  <h1 class="h3 mb-4">Gestione iscrizioni</h1>
+
+  <section aria-labelledby="riepilogo-iscrizioni">
+    <h2 class="h4" id="riepilogo-iscrizioni">Riepilogo</h2>
+
+    <div class="row g-3 mb-4">
+      <div class="col-6 col-lg-3">
+        <div class="card h-100 text-center shadow-sm">
+          <div class="card-body">
+            <div class="text-body-secondary">Partecipanti</div>
+            <div class="display-6" id="totale-partecipanti">{{ totale_partecipanti }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="card h-100 text-center shadow-sm border-success">
+          <div class="card-body">
+            <div class="text-body-secondary">Completi</div>
+            <div class="display-6 text-success" id="iscrizioni-complete">{{ iscrizioni_complete }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="card h-100 text-center shadow-sm border-warning">
+          <div class="card-body">
+            <div class="text-body-secondary">Incompleti</div>
+            <div class="display-6 text-warning-emphasis" id="iscrizioni-incomplete">{{ iscrizioni_incomplete }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="card h-100 text-center shadow-sm">
+          <div class="card-body">
+            <div class="text-body-secondary">Non iniziati</div>
+            <div class="display-6" id="partecipanti-non-iniziati">{{ partecipanti_non_iniziati }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="h5 mb-3">
+      Completamento: {{ "%.1f"|format(percentuale_completamento)|replace(".", ",") }}%
+    </p>
+
+    {% if totale_partecipanti == 0 %}
+      <div class="alert alert-info" role="alert">
+        Non è ancora stato caricato l'elenco dei partecipanti.
+      </div>
+    {% else %}
+      <div
+        class="progress mb-2"
+        role="img"
+        aria-label="{{ iscrizioni_complete }} completi, {{ iscrizioni_incomplete }} incompleti e {{ partecipanti_non_iniziati }} non iniziati"
+        style="height: 30px;"
+      >
+        <div
+          class="progress-bar bg-success"
+          style="width: {{ iscrizioni_complete / totale_partecipanti * 100 }}%;"
+        ></div>
+        <div
+          class="progress-bar bg-warning"
+          style="width: {{ iscrizioni_incomplete / totale_partecipanti * 100 }}%;"
+        ></div>
+        <div
+          class="progress-bar bg-secondary"
+          style="width: {{ partecipanti_non_iniziati / totale_partecipanti * 100 }}%;"
+        ></div>
+      </div>
+      <div class="d-flex gap-3 mb-4">
+        <span><span class="badge bg-success">&nbsp;</span> Completi</span>
+        <span><span class="badge bg-warning">&nbsp;</span> Incompleti</span>
+        <span><span class="badge bg-secondary">&nbsp;</span> Non iniziati</span>
+      </div>
+    {% endif %}
+  </section>
+
+  {% if iscrizioni %}
+    <div class="table-responsive">
+      <table class="table table-striped align-middle">
+        <thead>
+          <tr>
+            <th>Codice partecipante</th>
+            <th>Nome</th>
+            <th>Cognome</th>
+            <th>Laboratorio mattino</th>
+            <th>Laboratorio pomeriggio</th>
+            <th>Ultimo aggiornamento</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for iscrizione, partecipante, lab_mattino, lab_pomeriggio in iscrizioni %}
+            <tr>
+              <td>{{ partecipante.id }}</td>
+              <td>{{ partecipante.nome }}</td>
+              <td>{{ partecipante.cognome }}</td>
+              <td>
+                {% if lab_mattino %}
+                  {{ lab_mattino.id_lab }} — {{ lab_mattino.titolo }}
+                {% else %}
+                  Non scelto
+                {% endif %}
+              </td>
+              <td>
+                {% if lab_pomeriggio %}
+                  {{ lab_pomeriggio.id_lab }} — {{ lab_pomeriggio.titolo }}
+                {% else %}
+                  Non scelto
+                {% endif %}
+              </td>
+              <td>{{ iscrizione.data.strftime("%d/%m/%Y %H:%M") }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="alert alert-info" role="status">Non sono ancora presenti iscrizioni.</div>
+  {% endif %}
+</main>
+
+{% endblock %}

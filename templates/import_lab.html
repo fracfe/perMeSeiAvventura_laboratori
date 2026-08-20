@@ -11,12 +11,17 @@
     <a class="nav-link active" aria-current="page" href="{{ url_for("import_laboratori") }}">Import Laboratori</a>
   </li>
   <li class="nav-item">
-    <a class="nav-link" href="#">Gestione Iscrizioni</a>
+    <a class="nav-link" href="{{ url_for("stato_iscrizioni") }}">Stato Iscrizioni</a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" href="{{ url_for("gestione_iscrizioni") }}">Gestione Iscrizioni</a>
   </li>
 </ul>
 </div>
 
 <div class="m-5" x-data="excelUploader()">
+
+    <p><strong>Ultimo import:</strong> {{ ultimo_import }}</p>
 
     <input
         class="form-control"
@@ -25,16 +30,47 @@
         @change="loadFile($event)"
     >
 
+    <div class="alert alert-danger mt-3" x-show="errori.length > 0" role="alert">
+        <strong>Il file non può essere importato.</strong>
+        <ul class="mb-0 mt-2">
+            <template x-for="errore in errori" :key="errore">
+                <li x-text="errore"></li>
+            </template>
+        </ul>
+        <p
+            class="mb-0 mt-2"
+            x-show="righeNonValide > errori.length"
+            x-text="`Sono presenti altri ${righeNonValide - errori.length} errori.`"
+        ></p>
+    </div>
+
+    <div class="alert alert-success mt-3" x-show="fileAnalizzato && puoCaricare" role="status">
+        File valido:
+        <strong x-text="formData.lab_mattino.length"></strong> laboratori del mattino e
+        <strong x-text="formData.lab_pomeriggio.length"></strong> del pomeriggio.
+    </div>
+
+    <div class="alert alert-warning mt-3" x-show="fileAnalizzato && righeNonValide > 0" role="status">
+        Record validi:
+        <strong x-text="formData.lab_mattino.length + formData.lab_pomeriggio.length"></strong>.
+        Record non validi: <strong x-text="righeNonValide"></strong>.
+    </div>
+
+    <div class="alert alert-danger mt-3" x-show="erroreUpload" x-text="erroreUpload" role="alert"></div>
+
     <div class="d-flex justify-content-center">
         <button
             class="btn my-2 btn-success"
             @click="upload()"
-            :disabled="formData.lab_mattino.length === 0"
+            :disabled="!puoCaricare || caricamento"
+            x-text="caricamento ? 'Caricamento in corso…' : 'Carica i dati'"
         >
-            Carica i dati
         </button>
     </div>
 
+    <h2 class="h4" x-show="formData.lab_mattino.length > 0">
+        Laboratori del mattino (<span x-text="formData.lab_mattino.length"></span>)
+    </h2>
     <table class="table" x-show="formData.lab_mattino.length > 0">
     <thead>
         <tr>
@@ -56,6 +92,9 @@
     </tbody>
     </table>
 
+    <h2 class="h4" x-show="formData.lab_pomeriggio.length > 0">
+        Laboratori del pomeriggio (<span x-text="formData.lab_pomeriggio.length"></span>)
+    </h2>
     <table class="table" x-show="formData.lab_pomeriggio.length > 0">
     <thead>
         <tr>
@@ -82,53 +121,167 @@
 <script>
 function excelUploader() {
     return {
-          formData: {
-              lab_mattino: [],
-              lab_pomeriggio: [],
-          },
+        formData: {
+            lab_mattino: [],
+            lab_pomeriggio: [],
+        },
+        errori: [],
+        righeNonValide: 0,
+        fileAnalizzato: false,
+        erroreUpload: '',
+        caricamento: false,
+
+        get puoCaricare() {
+            return this.formData.lab_mattino.length > 0
+                && this.formData.lab_pomeriggio.length > 0
+                && this.righeNonValide === 0
+                && this.errori.length === 0;
+        },
+
+        aggiungiErrore(messaggio) {
+            if (this.errori.length < 10) {
+                this.errori.push(messaggio);
+            }
+        },
+
+        leggiFoglio(workbook, nomeFoglio, fascia) {
+            const foglio = workbook.Sheets[nomeFoglio];
+            const righe = XLSX.utils.sheet_to_json(foglio, {
+                header: 1,
+                defval: null,
+                blankrows: true
+            });
+            if (righe.length === 0) {
+                this.aggiungiErrore(`Il foglio "${nomeFoglio}" è vuoto.`);
+                return [];
+            }
+
+            const intestazioni = righe[0].map(valore => String(valore ?? '').trim());
+            const colonneRichieste = ['id', 'titolo', 'descrizione', 'posti'];
+            const colonneMancanti = colonneRichieste.filter(
+                colonna => !intestazioni.includes(colonna)
+            );
+            if (colonneMancanti.length > 0) {
+                this.aggiungiErrore(
+                    `Nel foglio "${nomeFoglio}" mancano le colonne: ${colonneMancanti.join(', ')}.`
+                );
+                return [];
+            }
+
+            const indiceId = intestazioni.indexOf('id');
+            const indiceTitolo = intestazioni.indexOf('titolo');
+            const indiceDescrizione = intestazioni.indexOf('descrizione');
+            const indicePosti = intestazioni.indexOf('posti');
+            const laboratori = [];
+
+            for (let indice = 1; indice < righe.length; indice += 1) {
+                const riga = righe[indice];
+                const rigaVuota = riga.every(
+                    valore => valore === null || String(valore).trim() === ''
+                );
+                if (rigaVuota) {
+                    continue;
+                }
+
+                const erroriRiga = [];
+                const id = String(riga[indiceId] ?? '').trim();
+                const titolo = riga[indiceTitolo];
+                const descrizione = riga[indiceDescrizione];
+                const posti = Number(riga[indicePosti]);
+
+                if (!id) {
+                    erroriRiga.push('codice laboratorio mancante');
+                } else if (id.length > 10) {
+                    erroriRiga.push('codice laboratorio oltre 10 caratteri');
+                }
+                if (typeof titolo !== 'string' || !titolo.trim()) {
+                    erroriRiga.push('titolo mancante');
+                } else if (titolo.trim().length > 255) {
+                    erroriRiga.push('titolo oltre 255 caratteri');
+                }
+                if (typeof descrizione !== 'string' || !descrizione.trim()) {
+                    erroriRiga.push('descrizione mancante');
+                }
+                if (!Number.isSafeInteger(posti) || posti <= 0 || posti > 2147483647) {
+                    erroriRiga.push('capienza non valida');
+                }
+
+                if (erroriRiga.length > 0) {
+                    this.righeNonValide += 1;
+                    this.aggiungiErrore(
+                        `Riga Excel ${indice + 1} del ${fascia}: ${erroriRiga.join(', ')}.`
+                    );
+                } else {
+                    laboratori.push({
+                        id,
+                        titolo: titolo.trim(),
+                        descrizione: descrizione.trim(),
+                        posti
+                    });
+                }
+            }
+
+            if (laboratori.length === 0) {
+                this.aggiungiErrore(
+                    `Il foglio "${nomeFoglio}" non contiene laboratori validi.`
+                );
+            }
+            return laboratori;
+        },
 
         async loadFile(event) {
+            this.formData = { lab_mattino: [], lab_pomeriggio: [] };
+            this.errori = [];
+            this.righeNonValide = 0;
+            this.fileAnalizzato = false;
+            this.erroreUpload = '';
+
             const file = event.target.files[0];
 
             if (!file) {
+                this.aggiungiErrore('Seleziona un file Excel da importare.');
                 return;
             }
 
-            const data = await file.arrayBuffer();
+            try {
+                const data = await file.arrayBuffer();
+                const workbook = XLSX.read(data, { type: 'array' });
+                const fogliMancanti = ['mattino', 'pomeriggio'].filter(
+                    nomeFoglio => !workbook.Sheets[nomeFoglio]
+                );
+                if (fogliMancanti.length > 0) {
+                    for (const nomeFoglio of fogliMancanti) {
+                        this.aggiungiErrore(`Nel file manca il foglio "${nomeFoglio}".`);
+                    }
+                    this.fileAnalizzato = true;
+                    return;
+                }
 
-            const workbook = XLSX.read(data, {
-                type: 'array'
-            });
-
-            const firstSheet = workbook.Sheets["mattino"];
-            const secondSheet = workbook.Sheets["pomeriggio"];
-
-            const json_mattino = XLSX.utils.sheet_to_json(firstSheet);
-
-            this.formData.lab_mattino = json_mattino
-                .filter(row => row.id && row.titolo && row.descrizione && row.posti)
-                .map(row => ({
-                    id: row.id,
-                    titolo: row.titolo,
-                    descrizione: row.descrizione,
-                    posti: row.posti
-                }));
-
-            const json_pomeriggio = XLSX.utils.sheet_to_json(secondSheet);
-
-            this.formData.lab_pomeriggio = json_pomeriggio
-                .filter(row => row.id && row.titolo && row.descrizione && row.posti)
-                .map(row => ({
-                    id: row.id,
-                    titolo: row.titolo,
-                    descrizione: row.descrizione,
-                    posti: row.posti
-                }));
-
-            console.log(this.formData);
+                this.formData.lab_mattino = this.leggiFoglio(
+                    workbook,
+                    'mattino',
+                    'mattino'
+                );
+                this.formData.lab_pomeriggio = this.leggiFoglio(
+                    workbook,
+                    'pomeriggio',
+                    'pomeriggio'
+                );
+                this.fileAnalizzato = true;
+            } catch (err) {
+                this.formData = { lab_mattino: [], lab_pomeriggio: [] };
+                this.aggiungiErrore('Il file Excel non può essere letto.');
+                this.fileAnalizzato = true;
+            }
         },
 
         async upload() {
+            if (!this.puoCaricare || this.caricamento) {
+                return;
+            }
+
+            this.caricamento = true;
+            this.erroreUpload = '';
             try {
                 const response = await fetch('/import_laboratori', {
                     method: 'POST',
@@ -138,14 +291,26 @@ function excelUploader() {
                     body: JSON.stringify(this.formData)
                 });
 
-                if (!response.ok) {
-                    throw new Error('Errore upload');
+                let data = {};
+                try {
+                    data = await response.json();
+                } catch (err) {
+                    data = {};
+                }
+                if (response.redirected) {
+                    throw new Error('Sessione scaduta. Accedi nuovamente all\'area amministrativa.');
+                }
+                if (!response.ok || data.ok !== true) {
+                    throw new Error(data.errore || 'Errore durante l\'upload.');
                 }
 
                 alert('Upload completato');
+                window.location.reload();
             } catch (err) {
                 console.error(err);
-                alert('Errore durante l\'upload');
+                this.erroreUpload = err.message || 'Errore durante l\'upload.';
+            } finally {
+                this.caricamento = false;
             }
         }
     }
