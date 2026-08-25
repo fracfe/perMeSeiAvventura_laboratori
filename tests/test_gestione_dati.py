@@ -133,7 +133,8 @@ class GestioneDatiTestCase(unittest.TestCase):
 
         self.assertEqual(pagina.status_code, 200)
         self.assertIn(b"Gestione dati", pagina.data)
-        self.assertIn(b"Torna alla console amministrativa", pagina.data)
+        self.assertNotIn(b"Torna alla console amministrativa", pagina.data)
+        self.assertIn(b'href="/admin/iscrizioni"', pagina.data)
         self.assertIn(b'href="/import_iscritti"', pagina.data)
         self.assertIn(b"Reset iscrizioni", pagina.data)
         self.assertIn(b"Reset partecipanti", pagina.data)

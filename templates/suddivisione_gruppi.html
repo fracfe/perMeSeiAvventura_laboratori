@@ -1,0 +1,242 @@
+{% extends "admin.html" %}
+
+{% block corpo %}
+
+<main class="container py-4" style="max-width: 820px;" x-data="suddivisioneGruppi()">
+  <div class="mb-4">
+    <h1 class="h2 mb-2">Suddivisione gruppi</h1>
+    <p class="text-body-secondary mb-0">
+      Carica l’elenco degli iscritti e crea laboratori di dimensioni uniformi,
+      bilanciati per Regione, ruolo, FoCa e Sesso.
+    </p>
+  </div>
+
+  <section class="card shadow-sm mb-4" aria-labelledby="fase-file">
+    <div class="card-body">
+      <h2 class="h4" id="fase-file">1. Carica il file Excel</h2>
+      <p class="card-text">
+        Il file deve essere in formato <code>.xlsx</code> e contenere le colonne
+        <strong>Codice</strong>, <strong>Nome</strong>, <strong>Cognome</strong>,
+        <strong>EmailContatto</strong>,
+        <strong>Partecipo in qualità di:</strong>, <strong>FoCa</strong>, <strong>Sesso</strong>
+        e <strong>Regione nella colonna I</strong>.
+      </p>
+      <label class="form-label" for="file-partecipanti">Elenco iscritti</label>
+      <input
+        class="form-control"
+        id="file-partecipanti"
+        type="file"
+        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        :disabled="validazione || elaborazione"
+        @change="validaFile($event)"
+      >
+      <template x-if="validazione">
+        <div class="mt-3 d-flex align-items-center gap-2 text-body-secondary" role="status">
+          <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+          <span>Sto verificando il file...</span>
+        </div>
+      </template>
+      <div class="alert alert-danger mt-3 mb-0" role="alert" x-show="errore" x-text="errore"></div>
+      <div class="alert alert-success mt-3 mb-0" role="status" x-show="fileValido">
+        File valido: <strong x-text="partecipanti"></strong> partecipanti rilevati.
+      </div>
+    </div>
+  </section>
+
+  <section class="card shadow-sm mb-4" aria-labelledby="fase-gruppi" x-show="fileValido">
+    <div class="card-body">
+      <h2 class="h4" id="fase-gruppi">2. Scegli il numero di laboratori</h2>
+      <label class="form-label" for="numero-laboratori">Numero di laboratori</label>
+      <input
+        class="form-control"
+        id="numero-laboratori"
+        type="number"
+        min="1"
+        :max="partecipanti"
+        step="1"
+        inputmode="numeric"
+        x-model.number="numeroLaboratori"
+        :disabled="elaborazione"
+      >
+
+      <div class="alert alert-info mt-3 mb-0" role="status" x-show="numeroValido">
+        <strong x-text="partecipanti"></strong> partecipanti /
+        <strong x-text="numeroLaboratori"></strong> laboratori →
+        <span x-text="testoDimensioni"></span>
+      </div>
+      <div class="alert alert-danger mt-3 mb-0" role="alert" x-show="numeroInserito && !numeroValido">
+        Il numero di laboratori deve essere un intero tra 1 e
+        <span x-text="partecipanti"></span>.
+      </div>
+      <div class="alert alert-warning mt-3 mb-0" role="status" x-show="numeroValido && laboratoriNumerosi">
+        Attenzione: il numero dei laboratori è maggiore della metà dei partecipanti.
+      </div>
+      <div class="alert alert-warning mt-3 mb-0" role="status" x-show="numeroValido && mediaFuoriIntervallo">
+        Attenzione: con <span x-text="numeroLaboratori"></span> laboratori i gruppi avranno
+        circa <span x-text="mediaFormattata"></span> partecipanti. La dimensione indicativa
+        consigliata è 15-20 persone.
+      </div>
+    </div>
+  </section>
+
+  <div class="d-grid mb-4" x-show="fileValido">
+    <button
+      class="btn btn-success btn-lg"
+      type="button"
+      :disabled="!numeroValido || elaborazione"
+      @click="genera()"
+    >
+      <template x-if="!elaborazione">
+        <span>Genera suddivisione</span>
+      </template>
+      <template x-if="elaborazione">
+        <span class="d-inline-flex align-items-center gap-2" role="status">
+          <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+          <span>Sto generando i gruppi...</span>
+        </span>
+      </template>
+    </button>
+  </div>
+
+  <section class="card border-success shadow-sm" aria-labelledby="fase-risultato" x-show="completato">
+    <div class="card-body">
+      <h2 class="h4 text-success" id="fase-risultato">Suddivisione completata</h2>
+      <p class="mb-1"><strong x-text="risultatoPartecipanti"></strong> partecipanti</p>
+      <p class="mb-2"><strong x-text="risultatoLaboratori"></strong> laboratori</p>
+      <ul>
+        <template x-for="riga in distribuzioneRisultato" :key="riga">
+          <li x-text="riga"></li>
+        </template>
+      </ul>
+      <a class="btn btn-primary btn-lg" :href="downloadUrl" :download="downloadNome">
+        Scarica Excel
+      </a>
+    </div>
+  </section>
+</main>
+
+<script>
+function suddivisioneGruppi() {
+  return {
+    file: null,
+    fileValido: false,
+    validazione: false,
+    elaborazione: false,
+    completato: false,
+    errore: "",
+    partecipanti: 0,
+    numeroLaboratori: null,
+    risultatoPartecipanti: 0,
+    risultatoLaboratori: 0,
+    distribuzioneRisultato: [],
+    downloadUrl: "",
+    downloadNome: "suddivisione_laboratori.xlsx",
+
+    get numeroInserito() {
+      return this.numeroLaboratori !== null && this.numeroLaboratori !== "";
+    },
+    get numeroValido() {
+      return Number.isInteger(this.numeroLaboratori)
+        && this.numeroLaboratori > 0
+        && this.numeroLaboratori <= this.partecipanti;
+    },
+    get dimensioneMinima() {
+      return this.numeroValido ? Math.floor(this.partecipanti / this.numeroLaboratori) : 0;
+    },
+    get dimensioneMassima() {
+      return this.numeroValido ? Math.ceil(this.partecipanti / this.numeroLaboratori) : 0;
+    },
+    get testoDimensioni() {
+      if (!this.numeroValido) return "";
+      if (this.dimensioneMinima === this.dimensioneMassima) {
+        return `gruppi da ${this.dimensioneMinima} persone`;
+      }
+      return `gruppi da ${this.dimensioneMinima}-${this.dimensioneMassima} persone`;
+    },
+    get laboratoriNumerosi() {
+      return this.numeroLaboratori > this.partecipanti / 2;
+    },
+    get media() {
+      return this.numeroValido ? this.partecipanti / this.numeroLaboratori : 0;
+    },
+    get mediaFuoriIntervallo() {
+      return this.media < 15 || this.media > 20;
+    },
+    get mediaFormattata() {
+      return new Intl.NumberFormat("it-IT", { maximumFractionDigits: 1 }).format(this.media);
+    },
+
+    liberaDownload() {
+      if (this.downloadUrl) URL.revokeObjectURL(this.downloadUrl);
+      this.downloadUrl = "";
+      this.completato = false;
+    },
+
+    async validaFile(evento) {
+      this.liberaDownload();
+      this.file = evento.target.files[0] || null;
+      this.fileValido = false;
+      this.partecipanti = 0;
+      this.numeroLaboratori = null;
+      this.errore = "";
+      if (!this.file) return;
+
+      this.validazione = true;
+      const dati = new FormData();
+      dati.append("file", this.file);
+      try {
+        const risposta = await fetch("{{ url_for('valida_excel_suddivisione') }}", {
+          method: "POST",
+          body: dati,
+        });
+        const esito = await risposta.json();
+        if (!risposta.ok || !esito.ok) throw new Error(esito.errore || "File non valido.");
+        this.partecipanti = esito.partecipanti;
+        this.fileValido = true;
+      } catch (errore) {
+        this.errore = errore.message || "Non è stato possibile verificare il file.";
+      } finally {
+        this.validazione = false;
+      }
+    },
+
+    async genera() {
+      if (!this.fileValido || !this.numeroValido) return;
+      this.liberaDownload();
+      this.errore = "";
+      this.elaborazione = true;
+      const dati = new FormData();
+      dati.append("file", this.file);
+      dati.append("numero_laboratori", String(this.numeroLaboratori));
+      try {
+        const risposta = await fetch("{{ url_for('genera_suddivisione_gruppi') }}", {
+          method: "POST",
+          body: dati,
+        });
+        if (!risposta.ok) {
+          const esito = await risposta.json();
+          throw new Error(esito.errore || "Non è stato possibile generare la suddivisione.");
+        }
+        const blob = await risposta.blob();
+        this.downloadUrl = URL.createObjectURL(blob);
+        this.risultatoPartecipanti = Number(risposta.headers.get("X-Partecipanti"));
+        this.risultatoLaboratori = Number(risposta.headers.get("X-Laboratori"));
+        const dimensioni = JSON.parse(risposta.headers.get("X-Dimensioni-Gruppi") || "{}");
+        this.distribuzioneRisultato = Object.entries(dimensioni)
+          .sort((a, b) => Number(b[0]) - Number(a[0]))
+          .map(([dimensione, quantita]) => `${quantita} laborator${Number(quantita) === 1 ? "io" : "i"} da ${dimensione} persone`);
+        const disposizione = risposta.headers.get("Content-Disposition") || "";
+        const nome = disposizione.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)/i);
+        this.downloadNome = nome ? decodeURIComponent(nome[1]) : "suddivisione_laboratori.xlsx";
+        this.completato = true;
+      } catch (errore) {
+        this.errore = errore.message || "Non è stato possibile generare la suddivisione.";
+      } finally {
+        this.elaborazione = false;
+      }
+    },
+  };
+}
+</script>
+
+{% endblock %}

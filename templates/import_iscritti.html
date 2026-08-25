@@ -2,26 +2,6 @@
 
 {% block corpo %}
 
-<div class="mx-5">
-<ul class="nav nav-pills nav-fill">
-  <li class="nav-item">
-    <a class="nav-link active" aria-current="page" href="{{ url_for("import_iscritti") }}">Import Iscritti BC</a>
-  </li>
-  <li class="nav-item">
-    <a class="nav-link" href="{{ url_for("import_laboratori") }}">Import Laboratori</a>
-  </li>
-  <li class="nav-item">
-    <a class="nav-link" href="{{ url_for("stato_iscrizioni") }}">Stato Iscrizioni</a>
-  </li>
-  <li class="nav-item">
-    <a class="nav-link" href="{{ url_for("gestione_iscrizioni") }}">Gestione Iscrizioni</a>
-  </li>
-  <li class="nav-item">
-    <a class="nav-link" href="{{ url_for("esporta_iscrizioni") }}">Esporta iscrizioni</a>
-  </li>
-</ul>
-</div>
-
 <div class="m-5" x-data="excelUploader()">
 
     <p><strong>Ultimo import:</strong> {{ ultimo_import }}</p>

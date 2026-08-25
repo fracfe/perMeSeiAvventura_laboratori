@@ -519,7 +519,7 @@ class FlussoIscrizioniTestCase(unittest.TestCase):
 
         for pagina in (login, laboratori, riepilogo, area_admin):
             self.assertEqual(pagina.status_code, 200)
-            self.assertIn(b">Home</a>", pagina.data)
+            self.assertIn(b"Home", pagina.data)
             self.assertIn(b'href="/"', pagina.data)
 
     def test_modifica_mattino_e_pomeriggio_riuscita(self):

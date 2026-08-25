@@ -1,13 +1,13 @@
 <!DOCTYPE html>
-<html>
+<html lang="it-IT">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN" crossorigin="anonymous">
     <link rel="icon" href="/static/cropped-ago-corallo-32x32.png" sizes="192x192" />
-    <title>PerMeSeiAvventura Laboratori - Upload Laboratori</title>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+    <title>PerMeSeiAvventura - Console amministrativa</title>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body style="background-color: #d8f3ee;">
     <header>
@@ -25,14 +25,75 @@
       ></div>
     </header>
 
-    <div class="container-fluid px-3 px-md-5 mb-3 d-flex flex-wrap gap-2 justify-content-between">
-      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for("index") }}">Home</a>
-      <div class="d-flex flex-wrap gap-2 justify-content-end">
-        <a class="btn btn-outline-danger" href="{{ url_for("gestione_dati") }}">Gestione dati</a>
-        <a class="btn btn-outline-secondary" href="{{ url_for("cambia_password") }}">Cambia password</a>
-        <a class="btn btn-outline-danger" href="{{ url_for("logout") }}">Esci dall'amministrazione</a>
+    {% set endpoints_iscrizioni = [
+      "gestione_iscrizioni",
+      "import_iscritti",
+      "import_laboratori",
+      "stato_iscrizioni",
+      "esporta_iscrizioni"
+    ] %}
+    <nav class="container-fluid px-3 px-md-5 mb-3" aria-label="Navigazione amministrativa">
+      <div class="d-flex flex-wrap gap-2 align-items-center">
+        <a
+          class="btn {{ 'btn-secondary' if request.endpoint == 'index' else 'btn-outline-secondary' }}"
+          href="{{ url_for('index') }}"
+          title="Torna al sito pubblico"
+          {% if request.endpoint == "index" %}aria-current="page"{% endif %}
+        >Home <span class="small">(sito pubblico)</span></a>
+
+        <div class="btn-group">
+          <a
+            class="btn {{ 'btn-primary' if request.endpoint in endpoints_iscrizioni else 'btn-outline-primary' }}"
+            href="{{ url_for('gestione_iscrizioni') }}"
+            {% if request.endpoint in endpoints_iscrizioni %}aria-current="page"{% endif %}
+          >Iscrizioni</a>
+          <button
+            class="btn {{ 'btn-primary' if request.endpoint in endpoints_iscrizioni else 'btn-outline-primary' }} dropdown-toggle dropdown-toggle-split"
+            type="button"
+            data-bs-toggle="dropdown"
+            aria-expanded="false"
+          >
+            <span class="visually-hidden">Apri gli strumenti iscrizioni</span>
+          </button>
+          <ul class="dropdown-menu">
+            <li>
+              <a class="dropdown-item{% if request.endpoint == 'import_iscritti' %} active{% endif %}" href="{{ url_for('import_iscritti') }}">Importa partecipanti</a>
+            </li>
+            <li>
+              <a class="dropdown-item{% if request.endpoint == 'import_laboratori' %} active{% endif %}" href="{{ url_for('import_laboratori') }}">Importa laboratori</a>
+            </li>
+            <li>
+              <a class="dropdown-item{% if request.endpoint == 'stato_iscrizioni' %} active{% endif %}" href="{{ url_for('stato_iscrizioni') }}">Stato iscrizioni</a>
+            </li>
+            <li>
+              <a class="dropdown-item{% if request.endpoint == 'esporta_iscrizioni' %} active{% endif %}" href="{{ url_for('esporta_iscrizioni') }}">Esporta iscrizioni</a>
+            </li>
+          </ul>
+        </div>
+
+        <a
+          class="btn {{ 'btn-primary' if request.endpoint == 'suddivisione_gruppi' else 'btn-outline-primary' }}"
+          href="{{ url_for('suddivisione_gruppi') }}"
+          {% if request.endpoint == "suddivisione_gruppi" %}aria-current="page"{% endif %}
+        >Suddivisione gruppi</a>
+        <a
+          class="btn {{ 'btn-primary' if request.endpoint == 'genera_file_comunicazioni' else 'btn-outline-primary' }}"
+          href="{{ url_for('genera_file_comunicazioni') }}"
+          {% if request.endpoint == "genera_file_comunicazioni" %}aria-current="page"{% endif %}
+        >Genera file comunicazioni</a>
+        <a
+          class="btn {{ 'btn-primary' if request.endpoint == 'gestione_dati' else 'btn-outline-primary' }}"
+          href="{{ url_for('gestione_dati') }}"
+          {% if request.endpoint == "gestione_dati" %}aria-current="page"{% endif %}
+        >Gestione dati</a>
+        <a
+          class="btn {{ 'btn-primary' if request.endpoint == 'cambia_password' else 'btn-outline-primary' }}"
+          href="{{ url_for('cambia_password') }}"
+          {% if request.endpoint == "cambia_password" %}aria-current="page"{% endif %}
+        >Cambia password</a>
+        <a class="btn btn-outline-danger ms-md-auto" href="{{ url_for('logout') }}">Esci</a>
       </div>
-    </div>
+    </nav>
 
     {% block corpo %}
     {% endblock %}

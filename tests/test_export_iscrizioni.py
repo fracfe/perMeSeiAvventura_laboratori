@@ -378,12 +378,12 @@ class ExportIscrizioniTestCase(unittest.TestCase):
             [(606, "Nessun", "Laboratorio"), (707, "Scelta", "Mista")],
         )
 
-    def test_pulsante_export_e_accanto_alla_gestione_iscrizioni(self):
+    def test_export_e_disponibile_dalla_navigazione_iscrizioni(self):
         self.login_admin()
 
         pagina = self.client.get("/admin/iscrizioni")
 
-        posizione_gestione = pagina.data.index(b">Gestione Iscrizioni</a>")
+        posizione_gestione = pagina.data.index(b">Iscrizioni</a>")
         posizione_export = pagina.data.index(b">Esporta iscrizioni</a>")
         self.assertGreater(posizione_export, posizione_gestione)
         self.assertIn(b'href="/admin/iscrizioni/esporta"', pagina.data)

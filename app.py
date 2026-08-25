@@ -1,8 +1,10 @@
-from flask import Flask, render_template, redirect, jsonify, request, url_for, flash, send_from_directory, send_file, session
+from functools import wraps
+
+from flask import Flask, render_template, redirect, request, url_for, flash, send_file, session
 from flask_login import UserMixin, login_user, LoginManager, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
-from werkzeug.utils import secure_filename
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from sqlalchemy import func, or_
@@ -11,8 +13,21 @@ from sqlalchemy.orm import aliased
 from openpyxl import Workbook
 from datetime import datetime
 from zoneinfo import ZoneInfo
-import pandas as pd
-import string
+from suddivisione_gruppi_service import (
+    ErroreSuddivisione,
+    carica_excel_suddivisione,
+    distribuzione_dimensioni,
+    estrai_partecipanti_suddivisione,
+    genera_excel_suddivisione,
+    valida_numero_gruppi,
+)
+from comunicazioni_service import (
+    ErroreComunicazioni,
+    carica_excel_comunicazioni,
+    crea_workbook_comunicazioni,
+    estrai_assegnazioni_domenica,
+    unisci_dati_comunicazioni,
+)
 import json
 import io
 import os
@@ -44,6 +59,13 @@ else:
     )
 app.config["SQLALCHEMY_DATABASE_URI"] =  uri
 app.config["SECRET_KEY"] = os.environ['SECRET_KEY']
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get(
+    "SESSION_COOKIE_SECURE",
+    "false",
+).strip().casefold() in {"1", "true", "yes", "on"}
 if db_type == "mariadb":
     app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"isolation_level": "READ COMMITTED"}
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
@@ -52,6 +74,22 @@ db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = "index"
 login_manager.login_message = u"Sessione scaduta!"
+
+
+def admin_required(*, api=False):
+    def decorator(funzione):
+        @wraps(funzione)
+        @login_required
+        def funzione_protetta(*args, **kwargs):
+            if current_user.username != "admin":
+                if api:
+                    return {"ok": False, "errore": "Accesso non autorizzato."}, 403
+                return redirect(url_for("index"))
+            return funzione(*args, **kwargs)
+
+        return funzione_protetta
+
+    return decorator
 
 # Classi Database
 class User(db.Model, UserMixin):
@@ -705,10 +743,8 @@ def riepilogo_iscrizione():
     )
 
 @app.route("/import_iscritti", methods=["GET", "POST"])
-@login_required
+@admin_required()
 def import_iscritti():
-    if current_user.username != "admin":
-        return redirect(url_for("index"))
     if request.method == "POST":
         dati, errore = valida_import_partecipanti(request.get_json(silent=True))
         if errore:
@@ -742,10 +778,8 @@ def import_iscritti():
     )
 
 @app.route("/import_laboratori", methods=["GET", "POST"])
-@login_required
+@admin_required()
 def import_laboratori():
-    if current_user.username != "admin":
-        return redirect(url_for("index"))
     if request.method == "POST":
         if Iscrizione.query.first() is not None:
             return {
@@ -805,18 +839,13 @@ def errore_richiesta_reset(conferma_attesa):
     return None
 
 @app.route("/admin/gestione_dati")
-@login_required
+@admin_required()
 def gestione_dati():
-    if current_user.username != "admin":
-        return redirect(url_for("index"))
     return render_template("gestione_dati.html")
 
 @app.route("/admin/gestione_dati/reset_iscrizioni", methods=["POST"])
-@login_required
+@admin_required()
 def reset_iscrizioni():
-    if current_user.username != "admin":
-        return redirect(url_for("index"))
-
     errore = errore_richiesta_reset("iscrizioni")
     if errore:
         flash(errore, "warning")
@@ -842,11 +871,8 @@ def reset_iscrizioni():
     return redirect(url_for("gestione_dati"))
 
 @app.route("/admin/gestione_dati/reset_partecipanti", methods=["POST"])
-@login_required
+@admin_required()
 def reset_partecipanti():
-    if current_user.username != "admin":
-        return redirect(url_for("index"))
-
     errore = errore_richiesta_reset("partecipanti")
     if errore:
         flash(errore, "warning")
@@ -881,11 +907,8 @@ def reset_partecipanti():
     return redirect(url_for("gestione_dati"))
 
 @app.route("/admin/gestione_dati/reset_laboratori", methods=["POST"])
-@login_required
+@admin_required()
 def reset_laboratori():
-    if current_user.username != "admin":
-        return redirect(url_for("index"))
-
     errore = errore_richiesta_reset("laboratori")
     if errore:
         flash(errore, "warning")
@@ -920,11 +943,8 @@ def reset_laboratori():
     return redirect(url_for("gestione_dati"))
 
 @app.route("/admin/stato_iscrizioni", methods=["GET", "POST"])
-@login_required
+@admin_required()
 def stato_iscrizioni():
-    if current_user.username != "admin":
-        return redirect(url_for("index"))
-
     if request.method == "POST":
         nuovo_stato = request.form.get("stato")
         if nuovo_stato not in STATI_ISCRIZIONI_VALIDI:
@@ -961,11 +981,8 @@ def stato_iscrizioni():
     )
 
 @app.route("/admin/iscrizioni")
-@login_required
+@admin_required()
 def gestione_iscrizioni():
-    if current_user.username != "admin":
-        return redirect(url_for("index"))
-
     laboratorio_mattino = aliased(Laboratorio)
     laboratorio_pomeriggio = aliased(Laboratorio)
     iscrizioni = (
@@ -1066,19 +1083,14 @@ def nome_foglio_laboratorio(laboratorio, nomi_usati):
 
 
 @app.route("/admin/iscrizioni/esporta")
-@login_required
+@admin_required()
 def esporta_iscrizioni():
-    if current_user.username != "admin":
-        return redirect(url_for("index"))
     return render_template("esporta_iscrizioni.html")
 
 
 @app.route("/admin/iscrizioni/esporta/elenco")
-@login_required
+@admin_required()
 def scarica_elenco_iscrizioni():
-    if current_user.username != "admin":
-        return redirect(url_for("index"))
-
     laboratorio_mattino = aliased(Laboratorio)
     laboratorio_pomeriggio = aliased(Laboratorio)
     iscrizioni = (
@@ -1149,11 +1161,8 @@ def scarica_elenco_iscrizioni():
 
 
 @app.route("/admin/iscrizioni/esporta/laboratori")
-@login_required
+@admin_required()
 def scarica_iscrizioni_per_laboratorio():
-    if current_user.username != "admin":
-        return redirect(url_for("index"))
-
     laboratori = Laboratorio.query.order_by(
         Laboratorio.tipologia,
         Laboratorio.id_lab,
@@ -1235,12 +1244,238 @@ def scarica_iscrizioni_per_laboratorio():
         "iscrizioni_per_laboratorio_per_me_sei_avventura",
     )
 
-@app.route("/admin/cambia_password", methods=["GET", "POST"])
-@login_required
-def cambia_password():
-    if current_user.username != "admin":
-        return redirect(url_for("index"))
 
+def errore_api_suddivisione(messaggio, stato=400):
+    return {"ok": False, "errore": messaggio}, stato
+
+
+@app.route("/admin/suddivisione-gruppi")
+@admin_required()
+def suddivisione_gruppi():
+    return render_template("suddivisione_gruppi.html")
+
+
+@app.route("/admin/suddivisione-gruppi/valida", methods=["POST"])
+@admin_required(api=True)
+def valida_excel_suddivisione():
+    workbook = None
+    try:
+        workbook = carica_excel_suddivisione(request.files.get("file"))
+        _, _, partecipanti = estrai_partecipanti_suddivisione(workbook)
+        return {"ok": True, "partecipanti": len(partecipanti)}
+    except ErroreSuddivisione as errore:
+        return errore_api_suddivisione(str(errore))
+    except HTTPException:
+        raise
+    except Exception:
+        app.logger.exception("Errore durante la validazione del file di suddivisione")
+        return errore_api_suddivisione(
+            "Non è stato possibile verificare il file Excel.",
+            500,
+        )
+    finally:
+        if workbook is not None:
+            workbook.close()
+
+
+@app.route("/admin/suddivisione-gruppi/genera", methods=["POST"])
+@admin_required(api=True)
+def genera_suddivisione_gruppi():
+    workbook = None
+    try:
+        workbook = carica_excel_suddivisione(request.files.get("file"))
+        _, _, partecipanti = estrai_partecipanti_suddivisione(workbook)
+        numero_gruppi = valida_numero_gruppi(
+            request.form.get("numero_laboratori"),
+            len(partecipanti),
+        )
+        gruppi = genera_excel_suddivisione(
+            workbook,
+            partecipanti,
+            numero_gruppi,
+        )
+        file_excel = io.BytesIO()
+        workbook.save(file_excel)
+        file_excel.seek(0)
+        data_esportazione = datetime.now(ZoneInfo("Europe/Rome")).date().isoformat()
+        risposta = send_file(
+            file_excel,
+            as_attachment=True,
+            download_name=f"suddivisione_laboratori_{data_esportazione}.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        conteggio_dimensioni = distribuzione_dimensioni(gruppi)
+        risposta.headers["X-Partecipanti"] = str(len(partecipanti))
+        risposta.headers["X-Laboratori"] = str(numero_gruppi)
+        risposta.headers["X-Dimensioni-Gruppi"] = json.dumps(
+            conteggio_dimensioni,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        return risposta
+    except ErroreSuddivisione as errore:
+        return errore_api_suddivisione(str(errore))
+    except HTTPException:
+        raise
+    except Exception:
+        app.logger.exception("Errore durante la generazione della suddivisione")
+        return errore_api_suddivisione(
+            "Non è stato possibile generare il file Excel.",
+            500,
+        )
+    finally:
+        if workbook is not None:
+            workbook.close()
+
+
+def descrivi_scelta_comunicazione(laboratorio, non_partecipa):
+    if non_partecipa:
+        return TESTO_NON_PARTECIPA
+    if laboratorio is None:
+        return ""
+    return f"{laboratorio.id_lab} — {laboratorio.titolo}"
+
+
+def leggi_dati_sabato_comunicazioni():
+    laboratorio_mattino = aliased(Laboratorio)
+    laboratorio_pomeriggio = aliased(Laboratorio)
+    risultati = (
+        db.session.query(
+            Partecipante,
+            Iscrizione,
+            laboratorio_mattino,
+            laboratorio_pomeriggio,
+        )
+        .select_from(Partecipante)
+        .outerjoin(Iscrizione, Iscrizione.partecipante == Partecipante.id)
+        .outerjoin(
+            laboratorio_mattino,
+            Iscrizione.scelta_mattino == laboratorio_mattino.id,
+        )
+        .outerjoin(
+            laboratorio_pomeriggio,
+            Iscrizione.scelta_pomeriggio == laboratorio_pomeriggio.id,
+        )
+        .order_by(Partecipante.cognome, Partecipante.nome, Partecipante.id)
+        .all()
+    )
+    return [
+        {
+            "codice": partecipante.id,
+            "nome": partecipante.nome,
+            "cognome": partecipante.cognome,
+            "sabato_mattina": descrivi_scelta_comunicazione(
+                lab_mattino,
+                iscrizione.non_partecipa_mattino if iscrizione else False,
+            ),
+            "sabato_pomeriggio": descrivi_scelta_comunicazione(
+                lab_pomeriggio,
+                iscrizione.non_partecipa_pomeriggio if iscrizione else False,
+            ),
+            "sabato_incompleto": not iscrizione_completa(iscrizione),
+        }
+        for partecipante, iscrizione, lab_mattino, lab_pomeriggio in risultati
+    ]
+
+
+def risposta_errore_comunicazioni(errore):
+    return {
+        "ok": False,
+        "errore": str(errore),
+        "anomalie": {
+            "duplicati": errore.duplicati,
+            "codici_excel_non_database": [],
+            "partecipanti_senza_domenica": [],
+            "iscrizioni_sabato_incomplete": [],
+        },
+    }, 400
+
+
+@app.route("/admin/comunicazioni")
+@admin_required()
+def genera_file_comunicazioni():
+    return render_template("genera_comunicazioni.html")
+
+
+@app.route("/admin/comunicazioni/valida", methods=["POST"])
+@admin_required(api=True)
+def valida_file_comunicazioni():
+    workbook = None
+    try:
+        workbook = carica_excel_comunicazioni(request.files.get("file"))
+        assegnazioni = estrai_assegnazioni_domenica(workbook)
+        righe, anomalie = unisci_dati_comunicazioni(
+            leggi_dati_sabato_comunicazioni(),
+            assegnazioni,
+        )
+        return {
+            "ok": True,
+            "partecipanti_esportabili": len(righe),
+            "assegnazioni_domenica": len(assegnazioni),
+            "anomalie": anomalie,
+        }
+    except ErroreComunicazioni as errore:
+        return risposta_errore_comunicazioni(errore)
+    except HTTPException:
+        raise
+    except Exception:
+        app.logger.exception("Errore durante la validazione del file comunicazioni")
+        return {
+            "ok": False,
+            "errore": "Non è stato possibile verificare il file comunicazioni.",
+        }, 500
+    finally:
+        if workbook is not None:
+            workbook.close()
+
+
+@app.route("/admin/comunicazioni/genera", methods=["POST"])
+@admin_required(api=True)
+def scarica_file_comunicazioni():
+    workbook_sorgente = None
+    workbook_output = None
+    try:
+        workbook_sorgente = carica_excel_comunicazioni(request.files.get("file"))
+        assegnazioni = estrai_assegnazioni_domenica(workbook_sorgente)
+        righe, anomalie = unisci_dati_comunicazioni(
+            leggi_dati_sabato_comunicazioni(),
+            assegnazioni,
+        )
+        workbook_output = crea_workbook_comunicazioni(righe)
+        file_excel = io.BytesIO()
+        workbook_output.save(file_excel)
+        file_excel.seek(0)
+        data_esportazione = datetime.now(ZoneInfo("Europe/Rome")).date().isoformat()
+        risposta = send_file(
+            file_excel,
+            as_attachment=True,
+            download_name=f"comunicazioni_partecipanti_{data_esportazione}.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        risposta.headers["X-Partecipanti-Esportati"] = str(len(righe))
+        risposta.headers["X-Anomalie-Totali"] = str(
+            sum(len(valori) for valori in anomalie.values())
+        )
+        return risposta
+    except ErroreComunicazioni as errore:
+        return risposta_errore_comunicazioni(errore)
+    except HTTPException:
+        raise
+    except Exception:
+        app.logger.exception("Errore durante la generazione del file comunicazioni")
+        return {
+            "ok": False,
+            "errore": "Non è stato possibile generare il file comunicazioni.",
+        }, 500
+    finally:
+        if workbook_sorgente is not None:
+            workbook_sorgente.close()
+        if workbook_output is not None:
+            workbook_output.close()
+
+@app.route("/admin/cambia_password", methods=["GET", "POST"])
+@admin_required()
+def cambia_password():
     if request.method == "POST":
         password_attuale = request.form.get("password_attuale", "")
         nuova_password = request.form.get("nuova_password", "")
@@ -1287,8 +1522,15 @@ def page_not_found(e):
     return render_template("errore_generico.html"), 404
 
 @app.errorhandler(405)
-def internal_error(e):
+def method_not_allowed(e):
     return render_template("errore_generico.html"), 405
+
+@app.errorhandler(413)
+def request_entity_too_large(e):
+    return {
+        "ok": False,
+        "errore": "Il file supera la dimensione massima consentita di 10 MB.",
+    }, 413
 
 @app.errorhandler(500)
 def internal_error(e):
