@@ -25,10 +25,11 @@
       ></div>
     </header>
 
-    <div class="container-fluid px-5 mb-3 d-flex justify-content-between">
+    <div class="container-fluid px-3 px-md-5 mb-3 d-flex flex-wrap gap-2 justify-content-between">
       <a class="btn btn-sm btn-outline-secondary" href="{{ url_for("index") }}">Home</a>
-      <div>
-        <a class="btn btn-outline-secondary me-2" href="{{ url_for("cambia_password") }}">Cambia password</a>
+      <div class="d-flex flex-wrap gap-2 justify-content-end">
+        <a class="btn btn-outline-danger" href="{{ url_for("gestione_dati") }}">Gestione dati</a>
+        <a class="btn btn-outline-secondary" href="{{ url_for("cambia_password") }}">Cambia password</a>
         <a class="btn btn-outline-danger" href="{{ url_for("logout") }}">Esci dall'amministrazione</a>
       </div>
     </div>

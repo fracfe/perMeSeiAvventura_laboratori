@@ -1,0 +1,64 @@
+{% extends "admin.html" %}
+
+{% block corpo %}
+
+<div class="mx-5">
+  <ul class="nav nav-pills nav-fill">
+    <li class="nav-item">
+      <a class="nav-link" href="{{ url_for("import_iscritti") }}">Import Iscritti BC</a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link" href="{{ url_for("import_laboratori") }}">Import Laboratori</a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link" href="{{ url_for("stato_iscrizioni") }}">Stato Iscrizioni</a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link" href="{{ url_for("gestione_iscrizioni") }}">Gestione Iscrizioni</a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link active" aria-current="page" href="{{ url_for("esporta_iscrizioni") }}">Esporta iscrizioni</a>
+    </li>
+  </ul>
+</div>
+
+<main class="container py-4">
+  <h1 class="h3 mb-3">Esporta iscrizioni</h1>
+  <p class="text-body-secondary mb-4">
+    Scegli come organizzare le iscrizioni nel file Excel.
+  </p>
+
+  <div class="row g-4">
+    <div class="col-12 col-lg-6">
+      <section class="card h-100 shadow-sm" aria-labelledby="titolo-export-elenco">
+        <div class="card-body d-flex flex-column">
+          <h2 class="h4" id="titolo-export-elenco">Esporta elenco iscrizioni</h2>
+          <p class="card-text flex-grow-1">
+            Un unico foglio con una riga per ogni partecipante che ha effettuato
+            almeno una scelta, con i laboratori del mattino e del pomeriggio.
+          </p>
+          <a class="btn btn-primary btn-lg" href="{{ url_for("scarica_elenco_iscrizioni") }}">
+            Scarica elenco iscrizioni
+          </a>
+        </div>
+      </section>
+    </div>
+
+    <div class="col-12 col-lg-6">
+      <section class="card h-100 shadow-sm" aria-labelledby="titolo-export-laboratori">
+        <div class="card-body d-flex flex-column">
+          <h2 class="h4" id="titolo-export-laboratori">Esporta per laboratorio</h2>
+          <p class="card-text flex-grow-1">
+            Un foglio separato per ogni laboratorio del mattino e del pomeriggio,
+            con l'elenco dei partecipanti assegnati.
+          </p>
+          <a class="btn btn-primary btn-lg" href="{{ url_for("scarica_iscrizioni_per_laboratorio") }}">
+            Scarica export per laboratorio
+          </a>
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+
+{% endblock %}

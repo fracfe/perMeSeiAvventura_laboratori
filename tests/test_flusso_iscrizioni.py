@@ -1,5 +1,7 @@
 import copy
+import html
 import os
+import re
 import unittest
 from datetime import datetime
 from unittest.mock import patch
@@ -19,7 +21,43 @@ from app import (
     User,
     app,
     db,
+    stato_iscrizione,
 )
+
+
+def righe_dashboard(contenuto):
+    testo = contenuto.decode("utf-8")
+    pattern = re.compile(
+        r'<tr\s+data-riga-iscrizione\s+'
+        r'data-codice="([^"]*)"\s+'
+        r'data-persona="([^"]*)"\s+'
+        r'data-stato="([^"]*)"'
+    )
+    return [
+        {
+            "codice": html.unescape(codice),
+            "persona": html.unescape(persona),
+            "stato": html.unescape(stato),
+        }
+        for codice, persona, stato in pattern.findall(testo)
+    ]
+
+
+def filtra_righe_dashboard(righe, codice="", persona="", stati=None):
+    def normalizza(valore):
+        return " ".join(valore.casefold().split())
+
+    if stati is None:
+        stati = {"completo", "incompleto", "non_iniziato"}
+    codice = normalizza(codice)
+    persona = normalizza(persona)
+    return {
+        int(riga["codice"])
+        for riga in righe
+        if codice in normalizza(riga["codice"])
+        and persona in normalizza(riga["persona"])
+        and riga["stato"] in stati
+    }
 
 
 class FlussoIscrizioniTestCase(unittest.TestCase):
@@ -65,12 +103,21 @@ class FlussoIscrizioniTestCase(unittest.TestCase):
         db.session.commit()
         return laboratori
 
-    def crea_iscrizione(self, partecipante_id=123, mattino=1, pomeriggio=2):
+    def crea_iscrizione(
+        self,
+        partecipante_id=123,
+        mattino=1,
+        pomeriggio=2,
+        non_partecipa_mattino=False,
+        non_partecipa_pomeriggio=False,
+    ):
         iscrizione = Iscrizione(
             data=datetime(2026, 8, 20, 20, 45),
             partecipante=partecipante_id,
             scelta_mattino=mattino,
             scelta_pomeriggio=pomeriggio,
+            non_partecipa_mattino=non_partecipa_mattino,
+            non_partecipa_pomeriggio=non_partecipa_pomeriggio,
         )
         db.session.add(iscrizione)
         db.session.commit()
@@ -89,6 +136,12 @@ class FlussoIscrizioniTestCase(unittest.TestCase):
         return self.client.post(
             f"/laboratori/{tipologia}/salva",
             json={"laboratorio_id": laboratorio_id},
+        )
+
+    def salva_non_partecipa(self, tipologia):
+        return self.client.post(
+            f"/laboratori/{tipologia}/salva",
+            json={"non_partecipa": True},
         )
 
     def login_admin(self, password="password"):
@@ -204,6 +257,153 @@ class FlussoIscrizioniTestCase(unittest.TestCase):
         self.assertEqual(iscrizione.scelta_mattino, 1)
         self.assertIsNone(iscrizione.scelta_pomeriggio)
         self.assertEqual(risposta.get_json()["redirect"], "/laboratori/pomeriggio")
+
+    def test_non_partecipa_e_sempre_disponibile_anche_senza_laboratori(self):
+        self.imposta_stato()
+        self.crea_partecipante()
+        self.verifica()
+
+        for tipologia in ("mattino", "pomeriggio"):
+            with self.subTest(tipologia=tipologia):
+                risposta = self.client.get(f"/lista_laboratori/{tipologia}")
+                opzione = risposta.get_json()["laboratori"][0]
+                self.assertEqual(opzione["id"], "non_partecipa")
+                self.assertEqual(
+                    opzione["titolo"],
+                    "Non partecipo a nessun laboratorio",
+                )
+                self.assertTrue(opzione["speciale"])
+                self.assertTrue(opzione["selezionabile"])
+                self.assertIsNone(opzione["posti"])
+                self.assertIsNone(opzione["posti_disponibili"])
+
+        pagina = self.client.get("/laboratori/mattino")
+        self.assertIn(b"Sempre disponibile", pagina.data)
+        self.assertIn(b"{ non_partecipa: true }", pagina.data)
+
+    def test_non_partecipa_in_entrambe_le_fasce_completa_iscrizione(self):
+        self.imposta_stato()
+        self.crea_partecipante()
+        self.verifica()
+
+        mattino = self.salva_non_partecipa("mattino")
+        iscrizione = Iscrizione.query.one()
+        self.assertEqual(mattino.status_code, 200)
+        self.assertTrue(iscrizione.non_partecipa_mattino)
+        self.assertIsNone(iscrizione.scelta_mattino)
+        self.assertEqual(stato_iscrizione(iscrizione), "incompleto")
+
+        pomeriggio = self.salva_non_partecipa("pomeriggio")
+        db.session.refresh(iscrizione)
+        self.assertEqual(pomeriggio.status_code, 200)
+        self.assertTrue(iscrizione.non_partecipa_pomeriggio)
+        self.assertIsNone(iscrizione.scelta_pomeriggio)
+        self.assertEqual(stato_iscrizione(iscrizione), "completo")
+        self.assertEqual(
+            pomeriggio.get_json()["redirect"],
+            "/iscrizione/riepilogo",
+        )
+
+        riepilogo = self.client.get("/iscrizione/riepilogo")
+        self.assertEqual(
+            riepilogo.data.count(b"Non partecipa a nessun laboratorio"),
+            2,
+        )
+        self.assertIn(b"Hai completato l'iscrizione", riepilogo.data)
+
+    def test_laboratorio_e_non_partecipa_si_possono_combinare_e_modificare(self):
+        self.prepara_partecipante()
+
+        self.salva("mattino", 1)
+        self.salva_non_partecipa("pomeriggio")
+        iscrizione = Iscrizione.query.one()
+        self.assertEqual(stato_iscrizione(iscrizione), "completo")
+        self.assertEqual(iscrizione.scelta_mattino, 1)
+        self.assertTrue(iscrizione.non_partecipa_pomeriggio)
+        self.assertEqual(
+            Iscrizione.query.filter_by(scelta_mattino=1).count(),
+            1,
+        )
+
+        verso_non_partecipa = self.salva_non_partecipa("mattino")
+        db.session.refresh(iscrizione)
+        self.assertEqual(verso_non_partecipa.status_code, 200)
+        self.assertIsNone(iscrizione.scelta_mattino)
+        self.assertTrue(iscrizione.non_partecipa_mattino)
+        self.assertEqual(
+            Iscrizione.query.filter_by(scelta_mattino=1).count(),
+            0,
+        )
+
+        lista = self.client.get("/lista_laboratori/pomeriggio").get_json()
+        opzione = next(
+            elemento
+            for elemento in lista["laboratori"]
+            if elemento["id"] == "non_partecipa"
+        )
+        self.assertTrue(opzione["posseduto"])
+        self.assertTrue(opzione["selezionabile"])
+
+        pomeriggio_reale = self.salva("pomeriggio", 2)
+        db.session.refresh(iscrizione)
+        self.assertEqual(pomeriggio_reale.status_code, 200)
+        self.assertTrue(iscrizione.non_partecipa_mattino)
+        self.assertEqual(iscrizione.scelta_pomeriggio, 2)
+        self.assertFalse(iscrizione.non_partecipa_pomeriggio)
+
+        verso_laboratorio = self.salva("mattino", 1)
+        db.session.refresh(iscrizione)
+        self.assertEqual(verso_laboratorio.status_code, 200)
+        self.assertEqual(iscrizione.scelta_mattino, 1)
+        self.assertFalse(iscrizione.non_partecipa_mattino)
+        self.assertEqual(iscrizione.scelta_pomeriggio, 2)
+
+    def test_non_partecipa_non_occupa_posti_ne_ha_un_limite(self):
+        self.imposta_stato()
+        self.crea_laboratori(posti=1)
+        for partecipante_id in range(1000, 1020):
+            self.crea_partecipante(
+                partecipante_id,
+                f"Nome{partecipante_id}",
+                "Senza laboratorio",
+            )
+            client = app.test_client()
+            client.post(
+                "/verifica_iscrizione",
+                json={"codice_socio": partecipante_id},
+            )
+            client.post("/conferma_identita")
+            risposta = client.post(
+                "/laboratori/mattino/salva",
+                json={"non_partecipa": True},
+            )
+            self.assertEqual(risposta.status_code, 200)
+
+        self.assertEqual(Iscrizione.query.count(), 20)
+        self.assertEqual(
+            Iscrizione.query.filter(Iscrizione.scelta_mattino.is_not(None)).count(),
+            0,
+        )
+
+    def test_opzione_non_partecipa_non_dipende_dall_import_laboratori(self):
+        self.login_admin()
+        importazione = self.client.post(
+            "/import_laboratori",
+            json=self.payload_laboratori(),
+        )
+        self.assertEqual(importazione.status_code, 200)
+        self.client.get("/logout")
+        self.imposta_stato()
+        self.crea_partecipante()
+        self.verifica()
+
+        for tipologia in ("mattino", "pomeriggio"):
+            laboratori = self.client.get(
+                f"/lista_laboratori/{tipologia}"
+            ).get_json()["laboratori"]
+            speciali = [elemento for elemento in laboratori if elemento["speciale"]]
+            self.assertEqual(len(speciali), 1)
+            self.assertEqual(speciali[0]["id"], "non_partecipa")
 
     def test_mattino_pieno_e_tipologia_errata_sono_rifiutati(self):
         self.imposta_stato()
@@ -418,6 +618,114 @@ class FlussoIscrizioniTestCase(unittest.TestCase):
         self.assertIn(b"Non scelto", pagina.data)
         self.assertIn(b"Ultimo aggiornamento", pagina.data)
         self.assertNotIn(b"<th>Data</th>", pagina.data)
+        stati = [riga["stato"] for riga in righe_dashboard(pagina.data)]
+        self.assertEqual(stati.count("completo"), 1)
+        self.assertEqual(stati.count("incompleto"), 2)
+        self.assertEqual(stati.count("non_iniziato"), 1)
+
+    def test_dashboard_mostra_campi_e_filtri_stato_inizialmente_attivi(self):
+        self.crea_partecipante()
+        self.login_admin()
+
+        pagina = self.client.get("/admin/iscrizioni")
+
+        self.assertIn(b'id="filtro-codice"', pagina.data)
+        self.assertIn(b'>Codice censimento</label>', pagina.data)
+        self.assertIn(b'id="filtro-persona"', pagina.data)
+        self.assertIn(b'>Nome o cognome</label>', pagina.data)
+        for stato in (b"completo", b"incompleto", b"non_iniziato"):
+            self.assertRegex(
+                pagina.data,
+                rb'data-filtro-stato="' + stato + rb'"[\s\S]*?aria-pressed="true"',
+            )
+        self.assertIn(b'addEventListener("input", aggiornaElenco)', pagina.data)
+        self.assertIn(b'statiAttivi.has(riga.dataset.stato)', pagina.data)
+
+    def test_dashboard_classifica_e_mostra_non_partecipa(self):
+        self.crea_partecipante(611, "Entrambe", "Speciali")
+        self.crea_iscrizione(
+            611,
+            mattino=None,
+            pomeriggio=None,
+            non_partecipa_mattino=True,
+            non_partecipa_pomeriggio=True,
+        )
+        self.crea_partecipante(612, "Solo", "Mattino")
+        self.crea_iscrizione(
+            612,
+            mattino=None,
+            pomeriggio=None,
+            non_partecipa_mattino=True,
+        )
+        self.crea_partecipante(613, "Non", "Iniziato")
+        self.login_admin()
+
+        pagina = self.client.get("/admin/iscrizioni")
+
+        self.assertIn(b'id="iscrizioni-complete">1</div>', pagina.data)
+        self.assertIn(b'id="iscrizioni-incomplete">1</div>', pagina.data)
+        self.assertIn(b'id="partecipanti-non-iniziati">1</div>', pagina.data)
+        self.assertEqual(pagina.data.count(b"Non partecipa"), 3)
+        stati = {
+            int(riga["codice"]): riga["stato"]
+            for riga in righe_dashboard(pagina.data)
+        }
+        self.assertEqual(stati[611], "completo")
+        self.assertEqual(stati[612], "incompleto")
+        self.assertEqual(stati[613], "non_iniziato")
+
+    def test_filtri_dashboard_combinano_ricerche_in_and_e_stati_in_or(self):
+        self.crea_laboratori()
+        self.crea_partecipante(111, "Mario", "Rossi")
+        self.crea_iscrizione(111, mattino=1, pomeriggio=2)
+        self.crea_partecipante(212, "Maria", "Rossi")
+        self.crea_iscrizione(212, mattino=3, pomeriggio=None)
+        self.crea_partecipante(312, "Luca", "Rossi")
+        self.crea_partecipante(412, "Anna", "Bianchi")
+        self.crea_iscrizione(412, mattino=1, pomeriggio=4)
+        self.crea_partecipante(512, "Vuoto", "Stato")
+        self.crea_iscrizione(512, mattino=None, pomeriggio=None)
+        self.login_admin()
+
+        pagina = self.client.get("/admin/iscrizioni")
+        righe = righe_dashboard(pagina.data)
+
+        self.assertEqual(
+            filtra_righe_dashboard(righe, persona="  ROSSI   mario "),
+            {111},
+        )
+        self.assertEqual(
+            filtra_righe_dashboard(
+                righe,
+                codice="12",
+                persona="Rossi",
+                stati={"completo", "incompleto"},
+            ),
+            {212},
+        )
+        self.assertEqual(
+            filtra_righe_dashboard(
+                righe,
+                stati={"completo", "incompleto"},
+            ),
+            {111, 212, 412},
+        )
+        self.assertEqual(
+            filtra_righe_dashboard(
+                righe,
+                codice="12",
+                persona="rossi",
+                stati={"incompleto", "non_iniziato"},
+            ),
+            {212, 312},
+        )
+        self.assertEqual(
+            filtra_righe_dashboard(righe),
+            {111, 212, 312, 412, 512},
+        )
+        self.assertEqual(filtra_righe_dashboard(righe, stati=set()), set())
+        riga_vuota = next(riga for riga in righe if riga["codice"] == "512")
+        self.assertEqual(riga_vuota["stato"], "non_iniziato")
 
     def test_reimport_laboratori_bloccato_se_esistono_iscrizioni(self):
         self.crea_laboratori()

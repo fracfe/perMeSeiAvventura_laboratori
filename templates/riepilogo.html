@@ -56,7 +56,9 @@
     <section class="card shadow-sm mb-3">
       <div class="card-body">
         <h2 class="h4">Sabato mattina</h2>
-        {% if laboratorio_mattino %}
+        {% if non_partecipa_mattino %}
+          <p class="mb-0"><strong>Non partecipa a nessun laboratorio</strong></p>
+        {% elif laboratorio_mattino %}
           <p class="mb-0"><strong>{{ laboratorio_mattino.id_lab }}</strong> — {{ laboratorio_mattino.titolo }}</p>
         {% else %}
           <p class="text-body-secondary mb-0">Nessun laboratorio salvato.</p>
@@ -70,7 +72,9 @@
     <section class="card shadow-sm mb-3">
       <div class="card-body">
         <h2 class="h4">Sabato pomeriggio</h2>
-        {% if laboratorio_pomeriggio %}
+        {% if non_partecipa_pomeriggio %}
+          <p class="mb-0"><strong>Non partecipa a nessun laboratorio</strong></p>
+        {% elif laboratorio_pomeriggio %}
           <p class="mb-0"><strong>{{ laboratorio_pomeriggio.id_lab }}</strong> — {{ laboratorio_pomeriggio.titolo }}</p>
         {% else %}
           <p class="text-body-secondary mb-0">Nessun laboratorio salvato.</p>

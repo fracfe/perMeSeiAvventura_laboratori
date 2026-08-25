@@ -28,7 +28,7 @@
     <main
       class="container py-3"
       style="max-width: 820px;"
-      x-data='laboratoriApp({{ tipologia|tojson }}, {{ scelta_corrente|tojson }}, {{ modifica|tojson }})'
+      x-data='laboratoriApp({{ tipologia|tojson }}, {{ scelta_corrente|tojson }}, {{ scelta_non_partecipa|tojson }}, {{ modifica|tojson }})'
     >
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
@@ -62,13 +62,13 @@
             <div class="card-body">
               <div class="d-flex justify-content-between gap-2 align-items-start">
                 <div>
-                  <div class="text-body-secondary" x-text="laboratorio.id_lab"></div>
+                  <div class="text-body-secondary" x-show="!laboratorio.speciale" x-text="laboratorio.id_lab"></div>
                   <h2 class="h5" x-text="laboratorio.titolo"></h2>
                 </div>
                 <span
                   class="badge"
-                  :class="laboratorio.posti_disponibili > 0 ? 'text-bg-success' : 'text-bg-secondary'"
-                  x-text="laboratorio.posti_disponibili > 0 ? `${laboratorio.posti_disponibili} posti disponibili` : (laboratorio.posseduto ? 'Completo — il tuo posto è già riservato' : 'Completo')"
+                  :class="laboratorio.speciale || laboratorio.posti_disponibili > 0 ? 'text-bg-success' : 'text-bg-secondary'"
+                  x-text="laboratorio.speciale ? 'Sempre disponibile' : (laboratorio.posti_disponibili > 0 ? `${laboratorio.posti_disponibili} posti disponibili` : (laboratorio.posseduto ? 'Completo — il tuo posto è già riservato' : 'Completo'))"
                 ></span>
               </div>
 
@@ -87,8 +87,8 @@
         </template>
       </div>
 
-      <div class="alert alert-info mt-3" x-show="!caricamento && laboratori.length === 0">
-        Non sono presenti laboratori per questa fascia.
+      <div class="alert alert-info mt-3" x-show="!caricamento && laboratori.filter(item => !item.speciale).length === 0">
+        Non sono presenti laboratori per questa fascia. Puoi comunque scegliere di non partecipare.
       </div>
 
       <div class="d-grid mt-4">
@@ -103,10 +103,11 @@
     </main>
 
 <script>
-function laboratoriApp(tipologia, sceltaCorrente, modifica) {
+function laboratoriApp(tipologia, sceltaCorrente, sceltaNonPartecipa, modifica) {
     return {
         tipologia,
         modifica,
+        sceltaNonPartecipa,
         scelta: sceltaCorrente,
         laboratori: [],
         errore: '',
@@ -169,7 +170,11 @@ function laboratoriApp(tipologia, sceltaCorrente, modifica) {
                 const response = await fetch(`/laboratori/${this.tipologia}/salva`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ laboratorio_id: this.scelta })
+                    body: JSON.stringify(
+                        this.scelta === this.sceltaNonPartecipa
+                            ? { non_partecipa: true }
+                            : { laboratorio_id: this.scelta }
+                    )
                 });
                 const dati = await response.json();
                 if (!response.ok) {

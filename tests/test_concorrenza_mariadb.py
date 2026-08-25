@@ -162,15 +162,29 @@ class ConcorrenzaMariaDBTestCase(unittest.TestCase):
             for colonna in inspector.get_columns("iscrizioni")
         }
         vincoli_univoci = inspector.get_unique_constraints("iscrizioni")
+        vincoli_check = {
+            vincolo["name"]
+            for vincolo in inspector.get_check_constraints("iscrizioni")
+        }
 
         self.assertTrue(colonne["scelta_mattino"]["nullable"])
         self.assertTrue(colonne["scelta_pomeriggio"]["nullable"])
+        self.assertFalse(colonne["non_partecipa_mattino"]["nullable"])
+        self.assertFalse(colonne["non_partecipa_pomeriggio"]["nullable"])
         self.assertTrue(
             any(
                 vincolo["name"] == "uq_iscrizioni_partecipante"
                 and vincolo["column_names"] == ["partecipante"]
                 for vincolo in vincoli_univoci
             )
+        )
+        self.assertIn(
+            "ck_iscrizioni_scelta_mattino_esclusiva",
+            vincoli_check,
+        )
+        self.assertIn(
+            "ck_iscrizioni_scelta_pomeriggio_esclusiva",
+            vincoli_check,
         )
 
     def test_due_utenti_non_ottengono_entrambi_ultimo_posto(self):

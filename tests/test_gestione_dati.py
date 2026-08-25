@@ -186,7 +186,7 @@ class GestioneDatiTestCase(unittest.TestCase):
         self.assertIn(b'id="iscrizioni-complete">0</div>', dashboard.data)
         self.assertIn(b'id="iscrizioni-incomplete">0</div>', dashboard.data)
         self.assertIn(b'id="partecipanti-non-iniziati">2</div>', dashboard.data)
-        self.assertIn(b"Non sono ancora presenti iscrizioni.", dashboard.data)
+        self.assertEqual(dashboard.data.count(b'data-stato="non_iniziato"'), 2)
 
     def test_password_errata_non_modifica_nessuno_dei_tre_insiemi(self):
         self.crea_dati()

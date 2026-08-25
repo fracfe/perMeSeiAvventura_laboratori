@@ -16,6 +16,7 @@ import string
 import json
 import io
 import os
+import re
 
 drivers = {
     "sqlite": "sqlite:///",
@@ -63,12 +64,22 @@ class Iscrizione(db.Model):
     __tablename__ = "iscrizioni"
     __table_args__ = (
         db.UniqueConstraint("partecipante", name="uq_iscrizioni_partecipante"),
+        db.CheckConstraint(
+            "scelta_mattino IS NULL OR non_partecipa_mattino = 0",
+            name="ck_iscrizioni_scelta_mattino_esclusiva",
+        ),
+        db.CheckConstraint(
+            "scelta_pomeriggio IS NULL OR non_partecipa_pomeriggio = 0",
+            name="ck_iscrizioni_scelta_pomeriggio_esclusiva",
+        ),
     )
     id = db.Column(db.Integer, primary_key=True)
     data = db.Column(db.DateTime, nullable=False)
     partecipante = db.Column(db.Integer, db.ForeignKey("partecipanti.id", name="fk_iscrizioni_partecipanti_id"), nullable=False)
     scelta_mattino = db.Column(db.Integer, db.ForeignKey("laboratori.id", name="fk_iscrizioni_laboratori_mattino_id"), nullable=True)
     scelta_pomeriggio = db.Column(db.Integer, db.ForeignKey("laboratori.id", name="fk_iscrizioni_laboratori_pomeriggio_id"), nullable=True)
+    non_partecipa_mattino = db.Column(db.Boolean, nullable=False, default=False)
+    non_partecipa_pomeriggio = db.Column(db.Boolean, nullable=False, default=False)
 
 class Partecipante(db.Model):
     __tablename__ = "partecipanti"
@@ -97,6 +108,8 @@ MESSAGGIO_ISCRIZIONI_KEY = "messaggio_iscrizioni"
 ULTIMO_IMPORT_PARTECIPANTI_KEY = "ultimo_import_partecipanti"
 ULTIMO_IMPORT_LABORATORI_KEY = "ultimo_import_laboratori"
 STATI_ISCRIZIONI_VALIDI = ("aperte", "chiuse")
+SCELTA_NON_PARTECIPA = "non_partecipa"
+TESTO_NON_PARTECIPA = "Non partecipa"
 MAX_INTEGER_DATABASE = 2147483647
 MAX_TESTO_DATABASE = 65535
 
@@ -282,9 +295,27 @@ def get_iscrizione_partecipante(partecipante_id):
 def iscrizione_completa(iscrizione):
     return (
         iscrizione is not None
-        and iscrizione.scelta_mattino is not None
-        and iscrizione.scelta_pomeriggio is not None
+        and scelta_fascia_effettuata(iscrizione, "mattino")
+        and scelta_fascia_effettuata(iscrizione, "pomeriggio")
     )
+
+def scelta_fascia_effettuata(iscrizione, tipologia):
+    return (
+        iscrizione is not None
+        and (
+            getattr(iscrizione, f"scelta_{tipologia}") is not None
+            or getattr(iscrizione, f"non_partecipa_{tipologia}")
+        )
+    )
+
+def stato_iscrizione(iscrizione):
+    if iscrizione_completa(iscrizione):
+        return "completo"
+    if scelta_fascia_effettuata(iscrizione, "mattino") != scelta_fascia_effettuata(
+        iscrizione, "pomeriggio"
+    ):
+        return "incompleto"
+    return "non_iniziato"
 
 def ora_roma():
     return datetime.now(ZoneInfo("Europe/Rome")).replace(tzinfo=None)
@@ -392,9 +423,9 @@ def percorso_iscrizione():
     iscrizione = get_iscrizione_partecipante(partecipante.id)
     if get_stato_iscrizioni() == "chiuse":
         return redirect(url_for("riepilogo_iscrizione"))
-    if iscrizione is None or iscrizione.scelta_mattino is None:
+    if not scelta_fascia_effettuata(iscrizione, "mattino"):
         return redirect(url_for("scelta_laboratorio", tipologia="mattino"))
-    if iscrizione.scelta_pomeriggio is None:
+    if not scelta_fascia_effettuata(iscrizione, "pomeriggio"):
         return redirect(url_for("scelta_laboratorio", tipologia="pomeriggio"))
     return redirect(url_for("riepilogo_iscrizione"))
 
@@ -417,16 +448,21 @@ def scelta_laboratorio(tipologia):
     modifica = request.args.get("modifica") == "1"
 
     if tipologia == "pomeriggio" and (
-        iscrizione is None or iscrizione.scelta_mattino is None
+        not scelta_fascia_effettuata(iscrizione, "mattino")
     ):
         return redirect(url_for("scelta_laboratorio", tipologia="mattino"))
 
     scelta_corrente = None
     if iscrizione is not None:
-        scelta_corrente = getattr(iscrizione, f"scelta_{tipologia}")
+        if getattr(iscrizione, f"non_partecipa_{tipologia}"):
+            scelta_corrente = SCELTA_NON_PARTECIPA
+        else:
+            scelta_corrente = getattr(iscrizione, f"scelta_{tipologia}")
 
     if modifica:
-        if not iscrizione_completa(iscrizione) or scelta_corrente is None:
+        if not iscrizione_completa(iscrizione) or not scelta_fascia_effettuata(
+            iscrizione, tipologia
+        ):
             return redirect(url_for("percorso_iscrizione"))
     elif scelta_corrente is not None:
         return redirect(url_for("percorso_iscrizione"))
@@ -435,6 +471,7 @@ def scelta_laboratorio(tipologia):
         "laboratori.html",
         tipologia=tipologia,
         scelta_corrente=scelta_corrente,
+        scelta_non_partecipa=SCELTA_NON_PARTECIPA,
         modifica=modifica,
     )
 
@@ -451,7 +488,9 @@ def lista_laboratori(tipologia):
 
     iscrizione = get_iscrizione_partecipante(partecipante.id)
     scelta_corrente = (
-        getattr(iscrizione, f"scelta_{tipologia}") if iscrizione else None
+        SCELTA_NON_PARTECIPA
+        if iscrizione and getattr(iscrizione, f"non_partecipa_{tipologia}")
+        else getattr(iscrizione, f"scelta_{tipologia}") if iscrizione else None
     )
     colonna_scelta = getattr(Iscrizione, f"scelta_{tipologia}")
     conteggi = dict(
@@ -461,7 +500,19 @@ def lista_laboratori(tipologia):
         .all()
     )
 
-    laboratori_output = []
+    laboratori_output = [
+        {
+            "id": SCELTA_NON_PARTECIPA,
+            "id_lab": "",
+            "titolo": "Non partecipo a nessun laboratorio",
+            "descrizione": "Seleziona questa opzione se non parteciperai in questa fascia.",
+            "posti": None,
+            "posti_disponibili": None,
+            "posseduto": scelta_corrente == SCELTA_NON_PARTECIPA,
+            "selezionabile": True,
+            "speciale": True,
+        }
+    ]
     for laboratorio in Laboratorio.query.filter_by(tipologia=tipologia).order_by(
         Laboratorio.id_lab
     ):
@@ -478,6 +529,7 @@ def lista_laboratori(tipologia):
                 "posti_disponibili": posti_disponibili,
                 "posseduto": posseduto,
                 "selezionabile": posseduto or posti_disponibili > 0,
+                "speciale": False,
             }
         )
     return {"ok": True, "laboratori": laboratori_output}
@@ -494,12 +546,20 @@ def salva_laboratorio(tipologia):
         return {"ok": False, "errore": "Sessione scaduta."}, 401
 
     dati = request.get_json(silent=True)
-    if not dati or "laboratorio_id" not in dati:
+    if not dati:
         return {"ok": False, "errore": "Seleziona un laboratorio valido."}, 400
-    try:
-        laboratorio_id = int(dati["laboratorio_id"])
-    except (TypeError, ValueError):
-        return {"ok": False, "errore": "Laboratorio non valido."}, 400
+    non_partecipa = dati.get("non_partecipa") is True
+    laboratorio_id = None
+    if non_partecipa:
+        if "laboratorio_id" in dati:
+            return {"ok": False, "errore": "Scelta non valida."}, 400
+    else:
+        if "laboratorio_id" not in dati:
+            return {"ok": False, "errore": "Seleziona un laboratorio valido."}, 400
+        try:
+            laboratorio_id = int(dati["laboratorio_id"])
+        except (TypeError, ValueError):
+            return {"ok": False, "errore": "Laboratorio non valido."}, 400
 
     try:
         partecipante = db.session.execute(
@@ -513,7 +573,7 @@ def salva_laboratorio(tipologia):
 
         iscrizione = get_iscrizione_partecipante(partecipante.id)
         if tipologia == "pomeriggio" and (
-            iscrizione is None or iscrizione.scelta_mattino is None
+            not scelta_fascia_effettuata(iscrizione, "mattino")
         ):
             db.session.rollback()
             return {
@@ -522,32 +582,40 @@ def salva_laboratorio(tipologia):
             }, 409
 
         campo_scelta = f"scelta_{tipologia}"
+        campo_non_partecipa = f"non_partecipa_{tipologia}"
         scelta_precedente = getattr(iscrizione, campo_scelta) if iscrizione else None
-        laboratori_da_bloccare = {laboratorio_id}
+        aveva_scelta = scelta_fascia_effettuata(iscrizione, tipologia)
+        laboratori_da_bloccare = set()
+        if laboratorio_id is not None:
+            laboratori_da_bloccare.add(laboratorio_id)
         if scelta_precedente is not None:
             laboratori_da_bloccare.add(scelta_precedente)
 
-        laboratori_bloccati = db.session.execute(
-            db.select(Laboratorio)
-            .where(Laboratorio.id.in_(laboratori_da_bloccare))
-            .order_by(Laboratorio.id)
-            .with_for_update()
-        ).scalars().all()
-        laboratorio = next(
-            (item for item in laboratori_bloccati if item.id == laboratorio_id),
-            None,
-        )
-        if laboratorio is None:
-            db.session.rollback()
-            return {"ok": False, "errore": "Laboratorio non valido."}, 400
-        if laboratorio.tipologia != tipologia:
-            db.session.rollback()
-            return {
-                "ok": False,
-                "errore": "Il laboratorio appartiene a una fascia diversa.",
-            }, 400
+        laboratori_bloccati = []
+        if laboratori_da_bloccare:
+            laboratori_bloccati = db.session.execute(
+                db.select(Laboratorio)
+                .where(Laboratorio.id.in_(laboratori_da_bloccare))
+                .order_by(Laboratorio.id)
+                .with_for_update()
+            ).scalars().all()
+        laboratorio = None
+        if not non_partecipa:
+            laboratorio = next(
+                (item for item in laboratori_bloccati if item.id == laboratorio_id),
+                None,
+            )
+            if laboratorio is None:
+                db.session.rollback()
+                return {"ok": False, "errore": "Laboratorio non valido."}, 400
+            if laboratorio.tipologia != tipologia:
+                db.session.rollback()
+                return {
+                    "ok": False,
+                    "errore": "Il laboratorio appartiene a una fascia diversa.",
+                }, 400
 
-        if scelta_precedente != laboratorio.id:
+        if laboratorio is not None and scelta_precedente != laboratorio.id:
             colonna_scelta = getattr(Iscrizione, campo_scelta)
             occupati = Iscrizione.query.filter(
                 colonna_scelta == laboratorio.id
@@ -565,10 +633,13 @@ def salva_laboratorio(tipologia):
                 partecipante=partecipante.id,
                 scelta_mattino=None,
                 scelta_pomeriggio=None,
+                non_partecipa_mattino=False,
+                non_partecipa_pomeriggio=False,
             )
             db.session.add(iscrizione)
 
-        setattr(iscrizione, campo_scelta, laboratorio.id)
+        setattr(iscrizione, campo_scelta, laboratorio.id if laboratorio else None)
+        setattr(iscrizione, campo_non_partecipa, non_partecipa)
         iscrizione.data = ora_roma()
         db.session.commit()
 
@@ -577,10 +648,10 @@ def salva_laboratorio(tipologia):
             destinazione = url_for("riepilogo_iscrizione")
         else:
             destinazione = url_for("scelta_laboratorio", tipologia="pomeriggio")
-        if scelta_precedente is None:
-            messaggio = f"Laboratorio del sabato {tipologia} salvato."
+        if not aveva_scelta:
+            messaggio = f"Scelta del sabato {tipologia} salvata."
         else:
-            messaggio = f"Laboratorio del sabato {tipologia} modificato."
+            messaggio = f"Scelta del sabato {tipologia} modificata."
         flash(messaggio, "success")
         return {"ok": True, "messaggio": messaggio, "redirect": destinazione}
     except IntegrityError:
@@ -623,6 +694,12 @@ def riepilogo_iscrizione():
         iscrizione=iscrizione,
         laboratorio_mattino=laboratorio_mattino,
         laboratorio_pomeriggio=laboratorio_pomeriggio,
+        non_partecipa_mattino=(
+            iscrizione.non_partecipa_mattino if iscrizione else False
+        ),
+        non_partecipa_pomeriggio=(
+            iscrizione.non_partecipa_pomeriggio if iscrizione else False
+        ),
         completa=iscrizione_completa(iscrizione),
         iscrizioni_aperte=get_stato_iscrizioni() == "aperte",
     )
@@ -716,6 +793,132 @@ def import_laboratori():
         ultimo_import=get_ultimo_import(ULTIMO_IMPORT_LABORATORI_KEY),
     )
 
+def errore_richiesta_reset(conferma_attesa):
+    password_attuale = request.form.get("password_attuale", "")
+    if not check_password_hash(current_user.password, password_attuale):
+        return "Password non corretta. Nessun dato è stato cancellato."
+    if request.form.get("conferma") != conferma_attesa:
+        return (
+            "Conferma esplicitamente l'operazione. "
+            "Nessun dato è stato cancellato."
+        )
+    return None
+
+@app.route("/admin/gestione_dati")
+@login_required
+def gestione_dati():
+    if current_user.username != "admin":
+        return redirect(url_for("index"))
+    return render_template("gestione_dati.html")
+
+@app.route("/admin/gestione_dati/reset_iscrizioni", methods=["POST"])
+@login_required
+def reset_iscrizioni():
+    if current_user.username != "admin":
+        return redirect(url_for("index"))
+
+    errore = errore_richiesta_reset("iscrizioni")
+    if errore:
+        flash(errore, "warning")
+        return redirect(url_for("gestione_dati"))
+
+    try:
+        Iscrizione.query.delete()
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        app.logger.exception("Errore durante il reset delle iscrizioni")
+        flash(
+            "Non è stato possibile cancellare le iscrizioni. "
+            "Nessun dato è stato cancellato.",
+            "danger",
+        )
+        return redirect(url_for("gestione_dati"))
+
+    flash(
+        "Tutte le iscrizioni registrate sono state cancellate.",
+        "success",
+    )
+    return redirect(url_for("gestione_dati"))
+
+@app.route("/admin/gestione_dati/reset_partecipanti", methods=["POST"])
+@login_required
+def reset_partecipanti():
+    if current_user.username != "admin":
+        return redirect(url_for("index"))
+
+    errore = errore_richiesta_reset("partecipanti")
+    if errore:
+        flash(errore, "warning")
+        return redirect(url_for("gestione_dati"))
+
+    try:
+        if Iscrizione.query.first() is not None:
+            flash(
+                "Non è possibile cancellare i partecipanti perché esistono "
+                "iscrizioni registrate. Esegui prima il reset delle iscrizioni.",
+                "warning",
+            )
+            return redirect(url_for("gestione_dati"))
+
+        Partecipante.query.delete()
+        SysOption.query.filter_by(key=ULTIMO_IMPORT_PARTECIPANTI_KEY).delete()
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        app.logger.exception("Errore durante il reset dei partecipanti")
+        flash(
+            "Non è stato possibile cancellare i partecipanti. "
+            "Nessun dato è stato cancellato.",
+            "danger",
+        )
+        return redirect(url_for("gestione_dati"))
+
+    flash(
+        "Tutti i partecipanti importati sono stati cancellati.",
+        "success",
+    )
+    return redirect(url_for("gestione_dati"))
+
+@app.route("/admin/gestione_dati/reset_laboratori", methods=["POST"])
+@login_required
+def reset_laboratori():
+    if current_user.username != "admin":
+        return redirect(url_for("index"))
+
+    errore = errore_richiesta_reset("laboratori")
+    if errore:
+        flash(errore, "warning")
+        return redirect(url_for("gestione_dati"))
+
+    try:
+        if Iscrizione.query.first() is not None:
+            flash(
+                "Non è possibile cancellare i laboratori perché esistono "
+                "iscrizioni registrate. Esegui prima il reset delle iscrizioni.",
+                "warning",
+            )
+            return redirect(url_for("gestione_dati"))
+
+        Laboratorio.query.delete()
+        SysOption.query.filter_by(key=ULTIMO_IMPORT_LABORATORI_KEY).delete()
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        app.logger.exception("Errore durante il reset dei laboratori")
+        flash(
+            "Non è stato possibile cancellare i laboratori. "
+            "Nessun dato è stato cancellato.",
+            "danger",
+        )
+        return redirect(url_for("gestione_dati"))
+
+    flash(
+        "Tutti i laboratori importati sono stati cancellati.",
+        "success",
+    )
+    return redirect(url_for("gestione_dati"))
+
 @app.route("/admin/stato_iscrizioni", methods=["GET", "POST"])
 @login_required
 def stato_iscrizioni():
@@ -772,7 +975,8 @@ def gestione_iscrizioni():
             laboratorio_mattino,
             laboratorio_pomeriggio,
         )
-        .join(Partecipante, Iscrizione.partecipante == Partecipante.id)
+        .select_from(Partecipante)
+        .outerjoin(Iscrizione, Iscrizione.partecipante == Partecipante.id)
         .outerjoin(
             laboratorio_mattino,
             Iscrizione.scelta_mattino == laboratorio_mattino.id,
@@ -785,21 +989,19 @@ def gestione_iscrizioni():
         .all()
     )
 
-    totale_partecipanti = Partecipante.query.count()
-    iscrizioni_complete = Iscrizione.query.filter(
-        Iscrizione.scelta_mattino.is_not(None),
-        Iscrizione.scelta_pomeriggio.is_not(None),
-    ).count()
-    iscrizioni_incomplete = Iscrizione.query.filter(
-        or_(
-            Iscrizione.scelta_mattino.is_(None),
-            Iscrizione.scelta_pomeriggio.is_(None),
-        )
-    ).count()
-    iscrizioni_iniziate = iscrizioni_complete + iscrizioni_incomplete
-    partecipanti_non_iniziati = max(
-        totale_partecipanti - iscrizioni_iniziate,
-        0,
+    iscrizioni = [
+        (*riga, stato_iscrizione(riga[0]))
+        for riga in iscrizioni
+    ]
+    totale_partecipanti = len(iscrizioni)
+    iscrizioni_complete = sum(
+        stato == "completo" for *_, stato in iscrizioni
+    )
+    iscrizioni_incomplete = sum(
+        stato == "incompleto" for *_, stato in iscrizioni
+    )
+    partecipanti_non_iniziati = sum(
+        stato == "non_iniziato" for *_, stato in iscrizioni
     )
     percentuale_completamento = (
         (iscrizioni_complete / totale_partecipanti * 100)
@@ -815,6 +1017,222 @@ def gestione_iscrizioni():
         iscrizioni_incomplete=iscrizioni_incomplete,
         partecipanti_non_iniziati=partecipanti_non_iniziati,
         percentuale_completamento=percentuale_completamento,
+    )
+
+def formatta_foglio_excel(foglio, larghezze_colonne):
+    foglio.freeze_panes = "A2"
+    foglio.auto_filter.ref = foglio.dimensions
+    for colonna, larghezza in zip(foglio.columns, larghezze_colonne):
+        foglio.column_dimensions[colonna[0].column_letter].width = larghezza
+
+
+def invia_file_excel(workbook, prefisso_nome_file):
+    file_excel = io.BytesIO()
+    workbook.save(file_excel)
+    file_excel.seek(0)
+    data_esportazione = datetime.now(ZoneInfo("Europe/Rome")).date().isoformat()
+    nome_file = f"{prefisso_nome_file}_{data_esportazione}.xlsx"
+
+    return send_file(
+        file_excel,
+        as_attachment=True,
+        download_name=nome_file,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+def nome_foglio_univoco(nome_base, nomi_usati):
+    nome_base = " ".join(nome_base.split())
+    nome_base = re.sub(r"[\\/*?:\[\]]", "-", nome_base)
+    nome = nome_base[:31]
+    numero = 2
+    while nome.casefold() in nomi_usati:
+        suffisso = f" ({numero})"
+        nome = f"{nome_base[:31 - len(suffisso)]}{suffisso}"
+        numero += 1
+    nomi_usati.add(nome.casefold())
+    return nome
+
+
+def nome_foglio_laboratorio(laboratorio, nomi_usati):
+    sigla_tipologia = {
+        "mattino": "M",
+        "pomeriggio": "P",
+    }.get(laboratorio.tipologia, "L")
+    return nome_foglio_univoco(
+        f"{sigla_tipologia} - {laboratorio.id_lab} - {laboratorio.titolo}",
+        nomi_usati,
+    )
+
+
+@app.route("/admin/iscrizioni/esporta")
+@login_required
+def esporta_iscrizioni():
+    if current_user.username != "admin":
+        return redirect(url_for("index"))
+    return render_template("esporta_iscrizioni.html")
+
+
+@app.route("/admin/iscrizioni/esporta/elenco")
+@login_required
+def scarica_elenco_iscrizioni():
+    if current_user.username != "admin":
+        return redirect(url_for("index"))
+
+    laboratorio_mattino = aliased(Laboratorio)
+    laboratorio_pomeriggio = aliased(Laboratorio)
+    iscrizioni = (
+        db.session.query(
+            Iscrizione,
+            Partecipante,
+            laboratorio_mattino,
+            laboratorio_pomeriggio,
+        )
+        .select_from(Partecipante)
+        .join(Iscrizione, Iscrizione.partecipante == Partecipante.id)
+        .outerjoin(
+            laboratorio_mattino,
+            Iscrizione.scelta_mattino == laboratorio_mattino.id,
+        )
+        .outerjoin(
+            laboratorio_pomeriggio,
+            Iscrizione.scelta_pomeriggio == laboratorio_pomeriggio.id,
+        )
+        .filter(
+            or_(
+                Iscrizione.scelta_mattino.is_not(None),
+                Iscrizione.scelta_pomeriggio.is_not(None),
+                Iscrizione.non_partecipa_mattino.is_(True),
+                Iscrizione.non_partecipa_pomeriggio.is_(True),
+            )
+        )
+        .order_by(Partecipante.cognome, Partecipante.nome)
+        .all()
+    )
+
+    workbook = Workbook()
+    foglio = workbook.active
+    foglio.title = "Iscrizioni"
+    foglio.append(
+        [
+            "Codice censimento",
+            "Nome",
+            "Cognome",
+            "Codice laboratorio mattutino",
+            "Laboratorio mattutino",
+            "Codice laboratorio pomeridiano",
+            "Laboratorio pomeridiano",
+        ]
+    )
+    for iscrizione, partecipante, lab_mattino, lab_pomeriggio in iscrizioni:
+        foglio.append(
+            [
+                partecipante.id,
+                partecipante.nome,
+                partecipante.cognome,
+                lab_mattino.id_lab if lab_mattino else None,
+                (
+                    TESTO_NON_PARTECIPA
+                    if iscrizione.non_partecipa_mattino
+                    else lab_mattino.titolo if lab_mattino else None
+                ),
+                lab_pomeriggio.id_lab if lab_pomeriggio else None,
+                (
+                    TESTO_NON_PARTECIPA
+                    if iscrizione.non_partecipa_pomeriggio
+                    else lab_pomeriggio.titolo if lab_pomeriggio else None
+                ),
+            ]
+        )
+    formatta_foglio_excel(foglio, (20, 24, 24, 31, 36, 33, 36))
+    return invia_file_excel(workbook, "iscrizioni_per_me_sei_avventura")
+
+
+@app.route("/admin/iscrizioni/esporta/laboratori")
+@login_required
+def scarica_iscrizioni_per_laboratorio():
+    if current_user.username != "admin":
+        return redirect(url_for("index"))
+
+    laboratori = Laboratorio.query.order_by(
+        Laboratorio.tipologia,
+        Laboratorio.id_lab,
+        Laboratorio.titolo,
+        Laboratorio.id,
+    ).all()
+    assegnazioni = (
+        db.session.query(
+            Partecipante,
+            Iscrizione.scelta_mattino,
+            Iscrizione.scelta_pomeriggio,
+            Iscrizione.non_partecipa_mattino,
+            Iscrizione.non_partecipa_pomeriggio,
+        )
+        .join(Iscrizione, Iscrizione.partecipante == Partecipante.id)
+        .filter(
+            or_(
+                Iscrizione.scelta_mattino.is_not(None),
+                Iscrizione.scelta_pomeriggio.is_not(None),
+                Iscrizione.non_partecipa_mattino.is_(True),
+                Iscrizione.non_partecipa_pomeriggio.is_(True),
+            )
+        )
+        .order_by(Partecipante.cognome, Partecipante.nome)
+        .all()
+    )
+    iscritti_per_laboratorio = {}
+    non_partecipanti = {"mattino": [], "pomeriggio": []}
+    for (
+        partecipante,
+        laboratorio_mattino_id,
+        laboratorio_pomeriggio_id,
+        non_partecipa_mattino,
+        non_partecipa_pomeriggio,
+    ) in assegnazioni:
+        if laboratorio_mattino_id is not None:
+            iscritti_per_laboratorio.setdefault(laboratorio_mattino_id, []).append(
+                partecipante
+            )
+        if laboratorio_pomeriggio_id is not None:
+            iscritti_per_laboratorio.setdefault(laboratorio_pomeriggio_id, []).append(
+                partecipante
+            )
+        if non_partecipa_mattino:
+            non_partecipanti["mattino"].append(partecipante)
+        if non_partecipa_pomeriggio:
+            non_partecipanti["pomeriggio"].append(partecipante)
+
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    nomi_usati = set()
+    for laboratorio in laboratori:
+        foglio = workbook.create_sheet(
+            nome_foglio_laboratorio(laboratorio, nomi_usati)
+        )
+        foglio.append(["Codice censimento", "Nome", "Cognome"])
+        for partecipante in iscritti_per_laboratorio.get(laboratorio.id, []):
+            foglio.append(
+                [partecipante.id, partecipante.nome, partecipante.cognome]
+            )
+        formatta_foglio_excel(foglio, (20, 24, 24))
+
+    for tipologia, nome_foglio in (
+        ("mattino", "M - Non partecipa"),
+        ("pomeriggio", "P - Non partecipa"),
+    ):
+        foglio = workbook.create_sheet(
+            nome_foglio_univoco(nome_foglio, nomi_usati)
+        )
+        foglio.append(["Codice censimento", "Nome", "Cognome"])
+        for partecipante in non_partecipanti[tipologia]:
+            foglio.append(
+                [partecipante.id, partecipante.nome, partecipante.cognome]
+            )
+        formatta_foglio_excel(foglio, (20, 24, 24))
+
+    return invia_file_excel(
+        workbook,
+        "iscrizioni_per_laboratorio_per_me_sei_avventura",
     )
 
 @app.route("/admin/cambia_password", methods=["GET", "POST"])

@@ -16,6 +16,9 @@
     <li class="nav-item">
       <a class="nav-link active" aria-current="page" href="{{ url_for("gestione_iscrizioni") }}">Gestione Iscrizioni</a>
     </li>
+    <li class="nav-item">
+      <a class="nav-link" href="{{ url_for("esporta_iscrizioni") }}">Esporta iscrizioni</a>
+    </li>
   </ul>
 </div>
 
@@ -88,16 +91,70 @@
           style="width: {{ partecipanti_non_iniziati / totale_partecipanti * 100 }}%;"
         ></div>
       </div>
-      <div class="d-flex gap-3 mb-4">
-        <span><span class="badge bg-success">&nbsp;</span> Completi</span>
-        <span><span class="badge bg-warning">&nbsp;</span> Incompleti</span>
-        <span><span class="badge bg-secondary">&nbsp;</span> Non iniziati</span>
-      </div>
     {% endif %}
+    <div class="d-flex flex-wrap gap-2 mb-4" id="filtri-stato" aria-label="Filtra per stato">
+      <button
+        type="button"
+        class="btn btn-success filtro-stato"
+        data-filtro-stato="completo"
+        data-classe-attiva="btn-success"
+        aria-pressed="true"
+      >
+        Completi ({{ iscrizioni_complete }})
+      </button>
+      <button
+        type="button"
+        class="btn btn-warning filtro-stato"
+        data-filtro-stato="incompleto"
+        data-classe-attiva="btn-warning"
+        aria-pressed="true"
+      >
+        Incompleti ({{ iscrizioni_incomplete }})
+      </button>
+      <button
+        type="button"
+        class="btn btn-secondary filtro-stato"
+        data-filtro-stato="non_iniziato"
+        data-classe-attiva="btn-secondary"
+        aria-pressed="true"
+      >
+        Non iniziati ({{ partecipanti_non_iniziati }})
+      </button>
+    </div>
+  </section>
+
+  <section class="mb-4" aria-labelledby="filtri-iscrizioni">
+    <h2 class="h4" id="filtri-iscrizioni">Filtra partecipanti</h2>
+    <div class="row g-3">
+      <div class="col-12 col-md-4">
+        <label class="form-label" for="filtro-codice">Codice censimento</label>
+        <input
+          class="form-control"
+          id="filtro-codice"
+          type="search"
+          inputmode="numeric"
+          autocomplete="off"
+          placeholder="Inserisci anche solo una parte del codice"
+        >
+      </div>
+      <div class="col-12 col-md-8">
+        <label class="form-label" for="filtro-persona">Nome o cognome</label>
+        <input
+          class="form-control"
+          id="filtro-persona"
+          type="search"
+          autocomplete="off"
+          placeholder="Cerca per nome, cognome o entrambi"
+        >
+      </div>
+    </div>
+    <p class="text-body-secondary mt-2 mb-0" aria-live="polite">
+      Partecipanti visualizzati: <span id="risultati-visibili">{{ totale_partecipanti }}</span>
+    </p>
   </section>
 
   {% if iscrizioni %}
-    <div class="table-responsive">
+    <div class="table-responsive" id="contenitore-elenco-iscrizioni">
       <table class="table table-striped align-middle">
         <thead>
           <tr>
@@ -106,38 +163,133 @@
             <th>Cognome</th>
             <th>Laboratorio mattino</th>
             <th>Laboratorio pomeriggio</th>
+            <th>Stato</th>
             <th>Ultimo aggiornamento</th>
           </tr>
         </thead>
         <tbody>
-          {% for iscrizione, partecipante, lab_mattino, lab_pomeriggio in iscrizioni %}
-            <tr>
+          {% for iscrizione, partecipante, lab_mattino, lab_pomeriggio, stato in iscrizioni %}
+            <tr
+              data-riga-iscrizione
+              data-codice="{{ partecipante.id }}"
+              data-persona="{{ partecipante.nome }} {{ partecipante.cognome }} {{ partecipante.cognome }} {{ partecipante.nome }}"
+              data-stato="{{ stato }}"
+            >
               <td>{{ partecipante.id }}</td>
               <td>{{ partecipante.nome }}</td>
               <td>{{ partecipante.cognome }}</td>
               <td>
-                {% if lab_mattino %}
+                {% if iscrizione and iscrizione.non_partecipa_mattino %}
+                  Non partecipa
+                {% elif lab_mattino %}
                   {{ lab_mattino.id_lab }} — {{ lab_mattino.titolo }}
                 {% else %}
                   Non scelto
                 {% endif %}
               </td>
               <td>
-                {% if lab_pomeriggio %}
+                {% if iscrizione and iscrizione.non_partecipa_pomeriggio %}
+                  Non partecipa
+                {% elif lab_pomeriggio %}
                   {{ lab_pomeriggio.id_lab }} — {{ lab_pomeriggio.titolo }}
                 {% else %}
                   Non scelto
                 {% endif %}
               </td>
-              <td>{{ iscrizione.data.strftime("%d/%m/%Y %H:%M") }}</td>
+              <td>
+                {% if stato == "completo" %}
+                  <span class="badge bg-success">Completo</span>
+                {% elif stato == "incompleto" %}
+                  <span class="badge bg-warning text-dark">Incompleto</span>
+                {% else %}
+                  <span class="badge bg-secondary">Non iniziato</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if iscrizione %}
+                  {{ iscrizione.data.strftime("%d/%m/%Y %H:%M") }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
             </tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
+    <div class="alert alert-info" id="nessun-risultato-filtri" role="status" hidden>
+      Nessun partecipante corrisponde ai filtri selezionati.
+    </div>
   {% else %}
-    <div class="alert alert-info" role="status">Non sono ancora presenti iscrizioni.</div>
+    <div class="alert alert-info" role="status">Non sono ancora presenti partecipanti.</div>
   {% endif %}
 </main>
+
+<script>
+  function normalizzaFiltroIscrizioni(valore) {
+    return valore.toLocaleLowerCase("it-IT").trim().replace(/\s+/g, " ");
+  }
+
+  function rigaIscrizioneVisibile(riga, codice, persona, statiAttivi) {
+    const codiceRiga = normalizzaFiltroIscrizioni(riga.dataset.codice);
+    const personaRiga = normalizzaFiltroIscrizioni(riga.dataset.persona);
+    return codiceRiga.includes(codice)
+      && personaRiga.includes(persona)
+      && statiAttivi.has(riga.dataset.stato);
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const filtroCodice = document.getElementById("filtro-codice");
+    const filtroPersona = document.getElementById("filtro-persona");
+    const pulsantiStato = Array.from(document.querySelectorAll("[data-filtro-stato]"));
+    const righe = Array.from(document.querySelectorAll("[data-riga-iscrizione]"));
+    const contenitoreElenco = document.getElementById("contenitore-elenco-iscrizioni");
+    const nessunRisultato = document.getElementById("nessun-risultato-filtri");
+    const risultatiVisibili = document.getElementById("risultati-visibili");
+
+    function aggiornaElenco() {
+      const codice = normalizzaFiltroIscrizioni(filtroCodice.value);
+      const persona = normalizzaFiltroIscrizioni(filtroPersona.value);
+      const statiAttivi = new Set(
+        pulsantiStato
+          .filter((pulsante) => pulsante.getAttribute("aria-pressed") === "true")
+          .map((pulsante) => pulsante.dataset.filtroStato)
+      );
+      let numeroVisibili = 0;
+      righe.forEach((riga) => {
+        const visibile = rigaIscrizioneVisibile(
+          riga,
+          codice,
+          persona,
+          statiAttivi
+        );
+        riga.hidden = !visibile;
+        if (visibile) {
+          numeroVisibili += 1;
+        }
+      });
+      risultatiVisibili.textContent = numeroVisibili;
+      if (contenitoreElenco && nessunRisultato) {
+        contenitoreElenco.hidden = numeroVisibili === 0;
+        nessunRisultato.hidden = numeroVisibili !== 0;
+      }
+    }
+
+    filtroCodice.addEventListener("input", aggiornaElenco);
+    filtroPersona.addEventListener("input", aggiornaElenco);
+    pulsantiStato.forEach((pulsante) => {
+      pulsante.addEventListener("click", () => {
+        const attivo = pulsante.getAttribute("aria-pressed") === "true";
+        const nuovoStato = !attivo;
+        const classeAttiva = pulsante.dataset.classeAttiva;
+        pulsante.setAttribute("aria-pressed", String(nuovoStato));
+        pulsante.classList.toggle(classeAttiva, nuovoStato);
+        pulsante.classList.toggle("btn-outline-secondary", !nuovoStato);
+        aggiornaElenco();
+      });
+    });
+    aggiornaElenco();
+  });
+</script>
 
 {% endblock %}
