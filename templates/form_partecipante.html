@@ -17,15 +17,46 @@
           </select>
         {% elif campo == 'incarico_altro' %}
           <textarea class="form-control" name="{{ campo }}" id="{{ campo }}">{{ valori[campo] or '' }}</textarea>
+          <div class="form-text">Obbligatorio se il ruolo indica Altro.</div>
         {% else %}
           <input class="form-control" name="{{ campo }}" id="{{ campo }}"
             value="{{ valori[campo] if valori[campo] is not none else '' }}"
-            type="{{ 'number' if campo == 'id' else 'text' }}"
+            type="{{ 'number' if campo == 'id' else 'email' if campo == 'email' else 'text' }}"
             {% if campo == 'id' %}min="1" max="2147483647" step="1" {% if modifica %}readonly{% endif %}{% else %}maxlength="{{ 50 if campo == 'sesso' else 255 }}"{% endif %}
-            {% if campo in ('id', 'nome', 'cognome') %}required{% endif %}>
+            {% if campo == 'id' or campo in obbligatori %}required{% endif %}>
         {% endif %}
       </div>
     {% endfor %}
+    {% if modifica %}
+    <h2 class="h4">Correzione assegnazioni</h2>
+    <p>Le assegnazioni del sabato sono forzate e possono superare la capienza.
+      I ricalcoli generali possono sostituire i gruppi impostati qui.</p>
+    {% for fascia in ('mattino', 'pomeriggio') %}
+      <label class="form-label" for="scelta_{{ fascia }}">Laboratorio {{ fascia }}</label>
+      <select class="form-select mb-3" id="scelta_{{ fascia }}" name="scelta_{{ fascia }}">
+        <option value="">Nessuna scelta</option>
+        {% if assegnazioni['scelta_' ~ fascia] == 'non_partecipa' %}
+        <option value="non_partecipa" selected>Non partecipa (scelta attuale)</option>
+        {% endif %}
+        {% for lab in laboratori if lab.tipologia == fascia %}
+        <option value="{{ lab.id }}" {% if assegnazioni['scelta_' ~ fascia] == lab.id|string %}selected{% endif %}>{{ lab.id_lab }} – {{ lab.titolo }}</option>
+        {% endfor %}
+      </select>
+      <label class="form-label" for="sottogruppo_{{ fascia }}">Gruppo A/B {{ fascia }}</label>
+      <select class="form-select mb-3" id="sottogruppo_{{ fascia }}" name="sottogruppo_{{ fascia }}">
+        {% for ab in ('', 'A', 'B') %}
+        <option value="{{ ab }}" {% if assegnazioni['sottogruppo_' ~ fascia] == ab %}selected{% endif %}>{{ ab or 'Nessuno' }}</option>
+        {% endfor %}
+      </select>
+    {% endfor %}
+    <label class="form-label" for="gruppo_domenica">Gruppo domenica</label>
+    <select class="form-select mb-3" id="gruppo_domenica" name="gruppo_domenica">
+      <option value="">Nessuna assegnazione</option>
+      {% for numero, nome in nomi_gruppi.items() %}
+      <option value="{{ numero }}" {% if assegnazioni.gruppo_domenica == numero|string %}selected{% endif %}>{{ numero }} – {{ nome }}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
     <button class="btn btn-success" type="submit">Salva partecipante</button>
     <a class="btn btn-outline-secondary" href="{{ url_for('gestione_iscrizioni') }}">Annulla</a>
   </form>

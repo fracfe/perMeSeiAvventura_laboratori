@@ -53,6 +53,55 @@ class ImportCsvTestCase(unittest.TestCase):
         return [tuple(getattr(riga, colonna.name) for colonna in modello.__table__.columns)
                 for riga in modello.query.all()]
 
+
+    def test_dettaglio_nuovi_modificati_invariati(self):
+        nuovo = self.importa([riga_valida()]).json
+        self.assertIn("101 – Rossi Anna: nuovo", nuovo["dettaglio"])
+        identico = self.importa([riga_valida()]).json
+        self.assertEqual((identico["aggiornati"], identico["invariati"], identico["dettaglio"]), (0, 1, []))
+        dati = riga_valida()
+        dati.update(email="nuova@example.test", zona="Nuova zona")
+        modificato = self.importa([dati, riga_valida(202)]).json
+        self.assertEqual([modificato[k] for k in ("inseriti", "aggiornati", "invariati", "totale")], [1, 1, 0, 2])
+        self.assertIn("101 – Rossi Anna: modificati Zona, Email", modificato["dettaglio"])
+        pagina = self.client.get("/import_iscritti").get_data(as_text=True)
+        self.assertIn("<details", pagina)
+        self.assertNotIn("<details open", pagina)
+
+
+    def test_preview_confronto_senza_scritture_e_conferma_dati_correnti(self):
+        self.prepara_esistenti()
+        self.importa([riga_valida()])
+        modelli = (Partecipante, Laboratorio, Iscrizione, SysOption)
+        prima = {m: self.snapshot(m) for m in modelli}
+        cambiata = {**riga_valida(303), "email": "nuova@example.test"}
+        righe = [riga_valida(), cambiata, riga_valida(404)]
+        with patch.object(db.session, "commit", side_effect=AssertionError("preview scrive")), \
+             patch.object(db.session, "add", side_effect=AssertionError("preview inserisce")):
+            risposta = self.importa(righe, "/import_iscritti/valida")
+        self.assertEqual(risposta.status_code, 200)
+        self.assertEqual([risposta.json[k] for k in ("inseriti", "aggiornati", "invariati", "totale")], [1, 1, 1, 3])
+        self.assertIn("404 – Rossi Anna: nuovo", risposta.json["dettaglio"])
+        self.assertIn("Email", risposta.json["dettaglio"][0])
+        self.assertEqual({m: self.snapshot(m) for m in modelli}, prima)
+        # Una modifica effettuata dopo la preview deve entrare nel confronto finale.
+        db.session.get(Partecipante, 101).email = "intervenuta@example.test"
+        db.session.commit()
+        conferma = self.importa(righe)
+        self.assertEqual(conferma.status_code, 200)
+        self.assertEqual([conferma.json[k] for k in ("inseriti", "aggiornati", "invariati")], [1, 2, 0])
+        self.assertIn("101 – Rossi Anna: modificati Email", conferma.json["dettaglio"])
+        self.assertEqual(db.session.get(Partecipante, 101).email, riga_valida()["email"])
+        self.assertEqual(self.snapshot(Iscrizione), prima[Iscrizione])
+
+    def test_preview_non_autorizza_payload_invalido_o_scritture_parziali(self):
+        righe = [riga_valida(), riga_valida(202)]
+        self.assertEqual(self.importa(righe, "/import_iscritti/valida").status_code, 200)
+        righe[1]["includi_domenica"] = "invalido"
+        self.assertEqual(self.importa(righe).status_code, 400)
+        self.assertEqual(Partecipante.query.count(), 0)
+        self.assertEqual(SysOption.query.count(), 0)
+
     def prepara_esistenti(self):
         db.session.add_all([
             Partecipante(id=101, nome="Prima", cognome="Originale", gruppo_domenica=7,
@@ -256,9 +305,12 @@ class ParserCsvBrowserTestCase(unittest.TestCase):
         validati, errore = valida_import_partecipanti([riga_valida()])
         self.assertIsNone(errore)
         risultato = self.parse(self.genera_csv(), mode="flow",
-                               anteprima={"ok": True, "partecipanti": validati})
+                               anteprima={"ok": True, "partecipanti": validati, "inseriti": 1, "aggiornati": 0,
+                                          "invariati": 0, "totale": 1, "dettaglio": ["101 – Rossi Anna: nuovo"]})
         self.assertTrue(risultato["ok"], risultato)
         self.assertEqual(risultato["prima"]["chiamate"], 1)
+        self.assertEqual(risultato["prima"]["dettaglio"], ["101 – Rossi Anna: nuovo"])
+        self.assertIn("1 nuovi, 0 modificati, 0 invariati, 1", risultato["prima"]["riepilogo"])
         self.assertTrue(risultato["prima"]["puoCaricare"])
         self.assertEqual(risultato["prima"]["rows"], validati)
         self.assertEqual(risultato["prima"]["fileInput"], "")
@@ -267,7 +319,7 @@ class ParserCsvBrowserTestCase(unittest.TestCase):
         self.assertEqual(risultato["chiamate"][1]["payload"], validati)
         self.assertNotIn("IGNORATO", json.dumps(risultato["chiamate"]))
         self.assertEqual(risultato["riepilogo"],
-                         "Import completato: 1 nuovi inseriti, 0 esistenti aggiornati, 1 righe elaborate.")
+                         "Import completato: 1 nuovi inseriti, 0 modificati, 0 invariati, 1 righe elaborate.")
         self.assertEqual(risultato["ultimoImport"], "06/09/2026 16:00")
         self.assertFalse(risultato["puoCaricare"])
 

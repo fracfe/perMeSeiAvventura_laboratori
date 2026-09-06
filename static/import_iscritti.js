@@ -43,7 +43,7 @@ function csvUploader(colonne) {
     return {
         rows: [],
         errore: '',
-        riepilogo: '',
+        riepilogo: '', dettaglio: [],
         ultimoImport: '',
         analisi: false,
         caricamento: false,
@@ -68,7 +68,7 @@ function csvUploader(colonne) {
             if (this.analisi || this.caricamento) return;
             this.rows = [];
             this.errore = '';
-            this.riepilogo = '';
+            this.riepilogo = ''; this.dettaglio = [];
             const file = event.target.files[0];
             if (!file) return;
             this.analisi = true;
@@ -85,6 +85,8 @@ function csvUploader(colonne) {
                 const payload = leggiCsvPartecipanti(testo, colonne);
                 const data = await this.invia('/import_iscritti/valida', payload);
                 this.rows = data.partecipanti;
+                this.riepilogo = `${data.inseriti} nuovi, ${data.aggiornati} modificati, ${data.invariati} invariati, ${data.totale} righe elaborate.`;
+                this.dettaglio = data.dettaglio || [];
             } catch (err) {
                 this.rows = [];
                 this.errore = err.message || 'Il file CSV non può essere letto.';
@@ -99,7 +101,8 @@ function csvUploader(colonne) {
             this.errore = '';
             try {
                 const data = await this.invia('/import_iscritti', this.rows);
-                this.riepilogo = `Import completato: ${data.inseriti} nuovi inseriti, ${data.aggiornati} esistenti aggiornati, ${data.totale} righe elaborate.`;
+                this.riepilogo = `Import completato: ${data.inseriti} nuovi inseriti, ${data.aggiornati} modificati, ${data.invariati} invariati, ${data.totale} righe elaborate.`;
+                this.dettaglio = data.dettaglio || [];
                 this.ultimoImport = data.ultimo_import;
                 this.rows = [];
             } catch (err) {

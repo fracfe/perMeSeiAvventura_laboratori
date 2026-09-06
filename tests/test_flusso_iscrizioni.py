@@ -1105,7 +1105,8 @@ class FlussoIscrizioniTestCase(unittest.TestCase):
         self.assertEqual(pagina.status_code, 200)
         self.assertIn(b'accept=".csv"', pagina.data)
         self.assertIn(b"import_iscritti.js", pagina.data)
-        self.assertIn(b"Anteprima validata", pagina.data)
+        self.assertIn("Anteprima import — nessuna modifica è stata ancora applicata".encode(), pagina.data)
+        self.assertIn(b"Conferma import", pagina.data)
         self.assertNotIn(b"EventLeadsOfAge", pagina.data)
         self.assertEqual(pagina.data.count(b'<th scope="col">'), 9)
         for colonna in ("Codice", "Nome", "Cognome", "Gruppo", "Zona", "Regione",

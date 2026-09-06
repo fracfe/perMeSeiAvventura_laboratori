@@ -12,7 +12,7 @@ const context = {
         const anteprima = url.endsWith('/valida');
         const data = anteprima
             ? input.anteprima
-            : { ok: true, inseriti: 1, aggiornati: 0, totale: 1, ultimo_import: '06/09/2026 16:00' };
+            : { ok: true, inseriti: 1, aggiornati: 0, invariati: 0, dettaglio: ['101 – Rossi Anna: nuovo'], totale: 1, ultimo_import: '06/09/2026 16:00' };
         return { ok: data.ok, redirected: false, json: async () => data };
     }
 };
@@ -28,7 +28,7 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '../static/import_iscritti.
             }] } };
             await uploader.loadFile(event);
             const prima = { chiamate: chiamate.length, puoCaricare: uploader.puoCaricare,
-                rows: uploader.rows, fileInput: event.target.value };
+                rows: uploader.rows, riepilogo: uploader.riepilogo, dettaglio: uploader.dettaglio, fileInput: event.target.value };
             await uploader.upload();
             process.stdout.write(JSON.stringify({ ok: true, prima, chiamate,
                 riepilogo: uploader.riepilogo, errore: uploader.errore,

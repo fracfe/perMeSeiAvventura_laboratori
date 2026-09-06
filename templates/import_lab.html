@@ -3,16 +3,22 @@
 {% block corpo %}
 
 <div class="m-5" x-data="excelUploader()">
+    <p class="alert alert-info" x-show="anteprima">Anteprima import — nessuna modifica è stata ancora applicata</p>
+    <div class="alert alert-success" x-show="riepilogo" x-text="riepilogo" role="status"></div>
+    <details x-show="dettaglio.length" class="mb-3"><summary>Espandi dettaglio modifiche</summary>
+      <ul><template x-for="(voce, indice) in dettaglio" :key="indice"><li x-text="voce"></li></template></ul>
+    </details>
 
     <p>Import incrementale: i laboratori esistenti vengono aggiornati per codice e fascia.
         Quelli assenti dal file e le iscrizioni già registrate vengono conservati.</p>
-    <p><strong>Ultimo import:</strong> {{ ultimo_import }}</p>
+    <p><strong>Ultimo import:</strong> <span x-text="ultimoImport">{{ ultimo_import }}</span></p>
 
     <input
         class="form-control"
         type="file"
         accept=".xlsx,.xls"
         @change="loadFile($event)"
+        :disabled="analisi || caricamento"
     >
 
     <div class="alert alert-danger mt-3" x-show="errori.length > 0" role="alert">
@@ -47,8 +53,8 @@
         <button
             class="btn my-2 btn-success"
             @click="upload()"
-            :disabled="!puoCaricare || caricamento"
-            x-text="caricamento ? 'Caricamento in corso…' : 'Carica i dati'"
+            :disabled="!puoCaricare || !anteprima || analisi || caricamento"
+            x-text="caricamento ? 'Caricamento in corso…' : 'Conferma import'"
         >
         </button>
     </div>
@@ -106,6 +112,7 @@
 <script>
 function excelUploader() {
     return {
+        riepilogo: '', dettaglio: [], ultimoImport: {{ ultimo_import|tojson }},
         formData: {
             lab_mattino: [],
             lab_pomeriggio: [],
@@ -114,7 +121,7 @@ function excelUploader() {
         righeNonValide: 0,
         fileAnalizzato: false,
         erroreUpload: '',
-        caricamento: false,
+        caricamento: false, analisi: false, anteprima: false,
 
         get puoCaricare() {
             return this.formData.lab_mattino.length > 0
@@ -220,6 +227,10 @@ function excelUploader() {
         },
 
         async loadFile(event) {
+            if (this.analisi || this.caricamento) return;
+            this.anteprima = false;
+            this.riepilogo = '';
+            this.dettaglio = [];
             this.formData = { lab_mattino: [], lab_pomeriggio: [] };
             this.errori = [];
             this.righeNonValide = 0;
@@ -233,6 +244,7 @@ function excelUploader() {
                 return;
             }
 
+            this.analisi = true;
             try {
                 const data = await file.arrayBuffer();
                 const workbook = XLSX.read(data, { type: 'array' });
@@ -258,44 +270,56 @@ function excelUploader() {
                     'pomeriggio'
                 );
                 this.fileAnalizzato = true;
+                if (this.puoCaricare) {
+                    const confronto = await this.invia('/import_laboratori/valida');
+                    this.riepilogo = `${confronto.inseriti} nuovi, ${confronto.aggiornati} modificati, ${confronto.invariati} invariati, ${confronto.totale} laboratori elaborati.`;
+                    this.dettaglio = confronto.dettaglio;
+                    this.anteprima = true;
+                }
             } catch (err) {
                 this.formData = { lab_mattino: [], lab_pomeriggio: [] };
-                this.aggiungiErrore('Il file Excel non può essere letto.');
+                this.aggiungiErrore(err.message || 'Il file Excel non può essere letto.');
                 this.fileAnalizzato = true;
+            } finally {
+                this.analisi = false;
             }
         },
 
-        async upload() {
-            if (!this.puoCaricare || this.caricamento) {
-                return;
+        async invia(url) {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(this.formData)
+            });
+
+            let data = {};
+            try {
+                data = await response.json();
+            } catch (err) {
+                data = {};
+            }
+            if (response.redirected) {
+                throw new Error('Sessione scaduta. Accedi nuovamente all\'area amministrativa.');
+            }
+            if (!response.ok || data.ok !== true) {
+                throw new Error(data.errore || 'Errore durante l\'upload.');
             }
 
+            return data;
+        },
+
+        async upload() {
+            if (!this.puoCaricare || !this.anteprima || this.analisi || this.caricamento) return;
             this.caricamento = true;
             this.erroreUpload = '';
             try {
-                const response = await fetch('/import_laboratori', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(this.formData)
-                });
-
-                let data = {};
-                try {
-                    data = await response.json();
-                } catch (err) {
-                    data = {};
-                }
-                if (response.redirected) {
-                    throw new Error('Sessione scaduta. Accedi nuovamente all\'area amministrativa.');
-                }
-                if (!response.ok || data.ok !== true) {
-                    throw new Error(data.errore || 'Errore durante l\'upload.');
-                }
-
-                alert(`Import completato: ${data.inseriti} nuovi, ${data.aggiornati} aggiornati, ${data.totale} laboratori elaborati.`);
-                window.location.reload();
+                const data = await this.invia('/import_laboratori');
+                this.riepilogo = `Import completato: ${data.inseriti} nuovi, ${data.aggiornati} modificati, ${data.invariati} invariati, ${data.totale} laboratori elaborati.`;
+                this.dettaglio = data.dettaglio || [];
+                this.ultimoImport = data.ultimo_import;
+                this.anteprima = false;
             } catch (err) {
                 console.error(err);
                 this.erroreUpload = err.message || 'Errore durante l\'upload.';

@@ -59,6 +59,96 @@ class AdminManualeTestCase(unittest.TestCase):
         db.session.commit()
         return mattino, pomeriggio
 
+
+    def test_correzioni_forzate_creazione_cambio_rimozione_e_timestamp(self):
+        mattino, pomeriggio = self.prepara()
+        db.session.get(Laboratorio, mattino).posti = 1
+        db.session.get(Laboratorio, pomeriggio).posti = 1
+        db.session.commit()
+        self.client.post('/admin/partecipanti/nuovo', data=self.persona(303))
+        dati = {**self.persona(303), "deve_iscriversi_sabato": "false",
+                "includi_domenica": "false", "scelta_mattino": str(mattino),
+                "scelta_pomeriggio": str(pomeriggio), "sottogruppo_mattino": "A",
+                "sottogruppo_pomeriggio": "B", "gruppo_domenica": "7"}
+        url = "/admin/partecipanti/303/modifica"
+        self.assertEqual(self.client.post(url, data=dati).status_code, 302)
+        i = Iscrizione.query.filter_by(partecipante=303).one()
+        p = db.session.get(Partecipante, 303)
+        self.assertEqual((i.scelta_mattino, i.scelta_pomeriggio, i.sottogruppo_mattino, i.sottogruppo_pomeriggio),
+                         (mattino, pomeriggio, "A", "B"))
+        self.assertTrue(p.deve_iscriversi_sabato)
+        self.assertTrue(p.includi_domenica)
+        self.assertEqual(p.gruppo_domenica, 7)
+        self.assertFalse(i.non_partecipa_mattino)
+        self.assertFalse(i.non_partecipa_pomeriggio)
+        self.assertIsNotNone(i.data)
+        data = i.data
+        lab = Laboratorio(id_lab="ALT", tipologia="mattino", titolo="Altro", descrizione="Altro", posti=1)
+        db.session.add(lab)
+        db.session.commit()
+        dati.update(scelta_mattino=str(lab.id), sottogruppo_mattino="B", sottogruppo_pomeriggio="", gruppo_domenica="20")
+        self.assertEqual(self.client.post(url, data=dati).status_code, 302)
+        self.assertEqual((i.scelta_mattino, i.sottogruppo_mattino, i.sottogruppo_pomeriggio, p.gruppo_domenica),
+                         (lab.id, "B", None, 20))
+        dati.update(scelta_mattino="", scelta_pomeriggio="", gruppo_domenica="",
+                    deve_iscriversi_sabato="true", includi_domenica="true")
+        self.assertEqual(self.client.post(url, data=dati).status_code, 302)
+        self.assertEqual((i.scelta_mattino, i.scelta_pomeriggio, i.sottogruppo_mattino, i.sottogruppo_pomeriggio),
+                         (None, None, None, None))
+        self.assertFalse(i.non_partecipa_mattino)
+        self.assertFalse(i.non_partecipa_pomeriggio)
+        self.assertEqual(i.data, data)
+        self.assertIsNone(p.gruppo_domenica)
+        self.assertTrue(p.includi_domenica)
+        self.assertTrue(p.deve_iscriversi_sabato)
+        # Il laboratorio rimane pieno: il normale utente non può forzarlo.
+        self.client.get('/logout')
+        self.client.post('/verifica_iscrizione', json={"codice_socio": 303})
+        self.client.post('/conferma_identita')
+        self.assertEqual(self.client.post('/laboratori/mattino/salva', json={"laboratorio_id": mattino}).status_code, 409)
+
+    def test_correzione_rinuncia_e_form_nomi_domenica(self):
+        mattino, pomeriggio = self.prepara()
+        data = Iscrizione.query.filter_by(partecipante=202).one().data
+        risposta = self.client.get("/admin/partecipanti/202/modifica").get_data(as_text=True)
+        for label in ("1 – Avventura", "7 – Gradualità", "20 – Vivere"):
+            self.assertIn(label, risposta)
+        dati = {**self.persona(202), "scelta_pomeriggio": str(pomeriggio), "sottogruppo_pomeriggio": "A"}
+        self.assertEqual(self.client.post("/admin/partecipanti/202/modifica", data=dati).status_code, 302)
+        i = Iscrizione.query.filter_by(partecipante=202).one()
+        self.assertFalse(i.non_partecipa_pomeriggio)
+        self.assertEqual((i.scelta_mattino, i.scelta_pomeriggio, i.data), (mattino, pomeriggio, data))
+
+    def test_validazione_manuale_preserva_form_e_database(self):
+        mattino, pomeriggio = self.prepara()
+        persone, iscrizioni = self.snapshot(Partecipante), self.snapshot(Iscrizione)
+        for campo, valore in [*( (c, "") for c in ("nome", "cognome", "gruppo", "zona", "regione", "email", "sesso", "foca")),
+                              ("email", "indirizzo-invalido"), ("incarico_altro", ""),
+                              ("scelta_mattino", str(pomeriggio)), ("scelta_pomeriggio", "99999"),
+                              ("sottogruppo_mattino", "C"), ("sottogruppo_pomeriggio", "a"),
+                              ("gruppo_domenica", "21")]:
+            with self.subTest(campo=campo, valore=valore):
+                dati = {**self.persona(), "cognome": "Conservato", campo: valore}
+                risposta = self.client.post("/admin/partecipanti/101/modifica", data=dati)
+                self.assertEqual(risposta.status_code, 400)
+                self.assertIn('value="Roma 1"' if campo == "cognome" else 'value="Conservato"', risposta.get_data(as_text=True))
+                self.assertEqual(self.snapshot(Partecipante), persone)
+                self.assertEqual(self.snapshot(Iscrizione), iscrizioni)
+
+    def test_ab_solo_chiuse_conserva_assegnazioni(self):
+        self.prepara()
+        prima = self.snapshot(Iscrizione)
+        pagina = self.client.get("/admin/iscrizioni/gruppi-ab").get_data(as_text=True)
+        self.assertIn("Chiudi le iscrizioni", pagina)
+        self.assertIn("disabled", pagina)
+        with patch("app.ricalcola_sottogruppi_ab", side_effect=AssertionError("non calcolare")):
+            risposta = self.client.post("/admin/iscrizioni/gruppi-ab/ricalcola", data={"conferma": "ricalcola"})
+        self.assertEqual(risposta.status_code, 409)
+        self.assertEqual(self.snapshot(Iscrizione), prima)
+        db.session.get(SysOption, "stato_iscrizioni").value = "chiuse"
+        db.session.commit()
+        self.assertEqual(self.client.post("/admin/iscrizioni/gruppi-ab/ricalcola", data={"conferma": "ricalcola"}).status_code, 302)
+
     def test_aggiunta_partecipante_campi_flag_senza_iscrizione_o_gruppo(self):
         risposta = self.client.post('/admin/partecipanti/nuovo', data={**self.persona(), 'gruppo_domenica': '9'})
         self.assertEqual(risposta.status_code, 302)
@@ -75,28 +165,28 @@ class AdminManualeTestCase(unittest.TestCase):
         prima = self.snapshot(Partecipante)
         for codice in ('101', '0', '-1', '2147483648', '1.2', '1e3', '', 'x'):
             self.assertEqual(self.client.post('/admin/partecipanti/nuovo', data=self.persona(codice)).status_code, 400)
-        for campo in ('nome', 'cognome', 'deve_iscriversi_sabato', 'includi_domenica'):
+        for campo in ('nome', 'cognome', 'gruppo', 'zona', 'regione', 'email', 'sesso', 'foca', 'deve_iscriversi_sabato', 'includi_domenica'):
             dati = self.persona(303)
             dati[campo] = ''
             self.assertEqual(self.client.post('/admin/partecipanti/nuovo', data=dati).status_code, 400)
         self.assertEqual(self.snapshot(Partecipante), prima)
         dati = self.persona(2147483647)
-        for campo in ('gruppo', 'zona', 'regione', 'email', 'sesso', 'foca', 'ruolo', 'incarico_altro'):
+        for campo in ('ruolo', 'incarico_altro'):
             dati[campo] = ''
         self.assertEqual(self.client.post('/admin/partecipanti/nuovo', data=dati).status_code, 302)
-        self.assertIsNone(db.session.get(Partecipante, 2147483647).email)
+        self.assertIsNone(db.session.get(Partecipante, 2147483647).ruolo)
 
     def test_modifica_partecipante_preserva_identita_iscrizioni_e_gruppi(self):
         self.prepara()
         iscrizioni = self.snapshot(Iscrizione)
         dati = self.persona()
-        dati.update(nome='Nuovo', cognome='Cognome', email='', deve_iscriversi_sabato='false', gruppo_domenica='2')
+        dati.update(nome='Nuovo', cognome='Cognome', email='nuovo@example.test', deve_iscriversi_sabato='false')
         risposta = self.client.post('/admin/partecipanti/101/modifica', data=dati)
         self.assertEqual(risposta.status_code, 302)
         persona = db.session.get(Partecipante, 101)
         self.assertEqual(persona.nome, 'Nuovo')
         self.assertEqual(persona.cognome, 'Cognome')
-        self.assertIsNone(persona.email)
+        self.assertEqual(persona.email, 'nuovo@example.test')
         self.assertFalse(persona.deve_iscriversi_sabato)
         self.assertFalse(persona.includi_domenica)
         self.assertEqual(persona.gruppo_domenica, 7)

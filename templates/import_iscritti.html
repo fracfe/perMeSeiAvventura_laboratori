@@ -6,7 +6,7 @@
     <h1 class="h3">Importa partecipanti da CSV</h1>
     <p><strong>Ultimo import:</strong> <span x-text='ultimoImport || {{ ultimo_import | tojson }}'>{{ ultimo_import }}</span></p>
     <p>Seleziona un CSV UTF-8 separato da punto e virgola (;), con le intestazioni nella prima riga.
-        Verifica l’anteprima e premi “Importa partecipanti”.</p>
+        Verifica l’anteprima e premi “Conferma import”.</p>
     <p>I codici esistenti vengono aggiornati; le persone assenti dal file restano invariate.
         Iscrizioni e assegnazioni dei gruppi vengono conservate.</p>
     <label for="csv-partecipanti" class="form-label">File iscritti (.csv)</label>
@@ -14,12 +14,15 @@
         @change="loadFile($event)" :disabled="analisi || caricamento">
     <p class="mt-3" x-show="analisi" role="status">Lettura e validazione in corso…</p>
     <div class="alert alert-danger mt-3" x-show="errore" x-text="errore" role="alert"></div>
+    <p class="alert alert-info mt-3" x-show="rows.length > 0">Anteprima import — nessuna modifica è stata ancora applicata</p>
     <div class="alert alert-success mt-3" x-show="riepilogo" x-text="riepilogo" role="status"></div>
+    <details x-show="dettaglio.length" class="mt-3"><summary>Espandi dettaglio modifiche</summary>
+      <ul><template x-for="(voce, indice) in dettaglio" :key="indice"><li x-text="voce"></li></template></ul>
+    </details>
     <div x-show="rows.length > 0">
-        <p class="mt-3">Anteprima validata: <strong x-text="rows.length"></strong> partecipanti.
-            Nessuna modifica è stata ancora salvata.</p>
+
         <button class="btn btn-success mb-3" @click="upload()" :disabled="!puoCaricare"
-            x-text="caricamento ? 'Import in corso…' : 'Importa partecipanti'"></button>
+            x-text="caricamento ? 'Import in corso…' : 'Conferma import'"></button>
         <div class="table-responsive">
             <table class="table">
                 <thead><tr>

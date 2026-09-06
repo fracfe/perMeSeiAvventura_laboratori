@@ -285,7 +285,7 @@ class GestioneDatiTestCase(unittest.TestCase):
 
         pagina_laboratori = self.client.get("/import_laboratori")
         pagina_partecipanti = self.client.get("/import_iscritti")
-        self.assertIn(b"Ultimo import:</strong> mai", pagina_laboratori.data)
+        self.assertIn(b'<span x-text="ultimoImport">mai</span>', pagina_laboratori.data)
         self.assertIn(b"20/08/2026 12:00", pagina_partecipanti.data)
 
     def test_reset_partecipanti_e_laboratori_bloccati_da_iscrizioni(self):

@@ -1,61 +1,181 @@
 # AGENTS.md
 
-## Progetto
+## 1. Scopo del progetto
 
-Questo repository contiene l'applicazione web per la gestione delle iscrizioni ai laboratori del convegno nazionale AGESCI **“Per Me Sei Avventura”**, previsto a settembre 2026.
+Questo repository contiene l’applicazione web per la gestione delle iscrizioni ai laboratori del convegno nazionale AGESCI **“Per Me Sei Avventura”**, settembre 2026.
 
-L'applicazione verrà utilizzata da circa **400 partecipanti**, con un possibile picco iniziale di circa **50–100 utenti contemporanei**.
+Il sistema è destinato a circa **400 partecipanti**, con un possibile picco iniziale di circa **50–100 utenti contemporanei**.
 
-La vita operativa dell'applicazione sarà molto breve: terminato il convegno, non è previsto che diventi un prodotto, una piattaforma o un gestionale permanente.
+La vita operativa dell’applicazione è breve: deve funzionare bene per le settimane dell’evento e non è destinata a diventare una piattaforma permanente.
 
-Lo sviluppo deve quindi privilegiare:
+Le priorità, in ordine, sono:
 
-1. affidabilità;
-2. semplicità;
-3. chiarezza del codice;
-4. facilità di test;
-5. rapidità nel completamento;
-6. buona esperienza utente;
-7. integrità dei dati.
+1. integrità dei dati;
+2. affidabilità dei flussi;
+3. semplicità operativa;
+4. chiarezza per utenti e admin;
+5. facilità di verifica;
+6. rapidità di intervento;
+7. codice comprensibile.
 
-**Non introdurre complessità non necessaria.**
-
-Non progettare il software come una piattaforma enterprise, multi-tenant o destinata a crescere negli anni.
+**Non introdurre complessità che non risolve un problema concreto dell’evento.**
 
 ---
 
-## Obiettivo dello sviluppo
+# 2. Principio fondamentale
 
-Il progetto è già in gran parte realizzato ed è nella fase finale di completamento e rifinitura.
+Il progetto è nella fase finale.
 
-Il lavoro restante consiste principalmente in:
+Quando esistono più soluzioni corrette, preferire quella:
 
-* correggere eventuali bug;
-* rifinire UX e testi;
-* completare piccole funzionalità mancanti;
-* verificare affidabilità e sicurezza;
-* effettuare test;
-* preparare il deploy di produzione.
+* più semplice;
+* meno invasiva;
+* coerente con il codice esistente;
+* facile da testare;
+* facile da correggere durante l’evento.
 
-Non effettuare riscritture generali o grandi refactoring se non espressamente richiesti.
+Non sono obiettivi:
 
-Quando una modifica può essere realizzata intervenendo sul codice esistente in modo semplice e leggibile, questa soluzione è preferibile all'introduzione di:
+* grandi refactoring;
+* architetture enterprise;
+* microservizi;
+* repository pattern generalizzati;
+* service layer introdotti solo per principio;
+* code asincrone;
+* Redis;
+* websocket;
+* caching sofisticato;
+* nuove infrastrutture;
+* generalizzazioni per futuri casi d’uso ipotetici.
 
-* nuove astrazioni;
-* framework;
-* servizi;
-* layer;
-* infrastrutture aggiuntive.
-
-L'obiettivo non è produrre il codice più sofisticato possibile.
-
-L'obiettivo è avere una piccola applicazione **semplice, comprensibile, affidabile e pronta per l'evento**.
+Una funzione semplice nel punto giusto è spesso preferibile a una nuova astrazione.
 
 ---
 
-## Stack attuale
+# 3. Modalità di lavoro agentica
 
-### Backend
+Ogni task deve essere trattata come un intervento circoscritto su un sistema già funzionante.
+
+## Prima di modificare
+
+1. leggere la richiesta completa;
+2. leggere le parti pertinenti di questo file;
+3. controllare:
+
+```bash
+git branch --show-current
+git status
+```
+
+4. individuare i file e le invarianti coinvolte;
+5. verificare il comportamento esistente prima di cambiarlo;
+6. distinguere chiaramente:
+
+   * comportamento da mantenere;
+   * comportamento da modificare;
+   * comportamento fuori scope.
+
+Quando la richiesta è di sola analisi:
+
+**non modificare file.**
+
+---
+
+## Durante la modifica
+
+* intervenire solo sui file necessari;
+* non correggere incidentalmente problemi non richiesti;
+* non fare refactoring estetici;
+* riutilizzare funzioni e algoritmi già presenti quando adeguati;
+* evitare duplicazione della logica di business;
+* mantenere le transazioni brevi;
+* preservare i dati non interessati dalla task;
+* aggiungere test mirati per il nuovo comportamento.
+
+Se emerge un problema estraneo:
+
+1. segnalarlo;
+2. indicarne gravità e impatto;
+3. non correggerlo automaticamente salvo sia indispensabile per completare la task.
+
+---
+
+## Dopo la modifica
+
+Verificare almeno:
+
+1. test mirati;
+2. suite generale pertinente;
+3. `git diff --check`;
+4. assenza di file temporanei/debug;
+5. `git status`.
+
+Nel report finale indicare:
+
+* file modificati;
+* comportamento precedente;
+* comportamento nuovo;
+* invarianti preservate;
+* test eseguiti;
+* eventuali limiti o problemi rimasti.
+
+---
+
+# 4. Autonomia operativa
+
+Codex può autonomamente:
+
+* leggere e modificare il repository;
+* eseguire test;
+* ricostruire il container `web`;
+* riallineare lo stack Docker;
+* creare e rimuovere database/container MariaDB temporanei per i test;
+* chiedere approvazione per uscire dalla sandbox quando serve Docker.
+
+Quando il codice nel container può essere vecchio rispetto al workspace, riallinearlo autonomamente:
+
+```bash
+cd /opt/pmsea-test/infra
+docker compose build web
+docker compose up -d web
+```
+
+Non considerare valido un test sul container prima di aver verificato che il codice sia aggiornato.
+
+---
+
+# 5. Operazioni vietate senza richiesta esplicita
+
+Non eseguire autonomamente:
+
+* commit;
+* push;
+* merge;
+* rebase;
+* reset Git;
+* modifica del branch `main`;
+* cancellazione di dati persistenti;
+* test distruttivi su database reali;
+* modifiche di configurazione produzione;
+* migrazioni sul database reale se non richieste.
+
+Branch ordinario:
+
+```text
+dev
+```
+
+Branch stabile:
+
+```text
+main
+```
+
+---
+
+# 6. Stack
+
+## Backend
 
 * Python 3.11
 * Flask
@@ -64,1122 +184,1292 @@ L'obiettivo è avere una piccola applicazione **semplice, comprensibile, affidab
 * Flask-Login
 * Gunicorn
 
-### Database
+## Database
 
-* MariaDB 11.4 come database di riferimento per test e produzione
-* il codice supporta anche SQLite, utilizzato principalmente per alcuni test isolati
+Database di riferimento:
 
-Le funzionalità che dipendono da:
+* MariaDB 11.4
 
-* lock;
-* concorrenza;
+SQLite viene usato per molti test applicativi.
+
+Le funzionalità relative a:
+
 * `SELECT ... FOR UPDATE`;
+* concorrenza;
+* transazioni;
+* CHECK;
 * migration;
-* vincoli MariaDB;
+* comportamento specifico del driver;
 
-devono essere considerate valide solo dopo verifica su MariaDB.
+devono essere verificate anche su MariaDB quando pertinenti.
 
-### Frontend
+## Frontend
 
 * Jinja
 * Bootstrap
 * Alpine.js
 * JavaScript semplice
-* SheetJS/XLSX per la lettura locale dei file Excel
+* SheetJS/XLSX
 
-### Deployment
-
-* Docker
-* Docker Compose
-* Gunicorn
-* GitHub Container Registry
-* GitHub Actions
-
-Non introdurre framework frontend, API layer, code generator, task queue, Redis o altri servizi salvo richiesta esplicita.
+Non introdurre framework frontend aggiuntivi.
 
 ---
 
-## Struttura generale
+# 7. Ambiente
 
-L'applicazione è volutamente piccola e monolitica.
+Repository:
 
-Backend principale:
+```text
+/opt/pmsea-test/app
+```
 
-`app.py`
+Docker Compose:
 
-Template:
+```text
+/opt/pmsea-test/infra
+```
 
-`templates/`
+Applicazione test:
 
-File statici:
+```text
+http://192.168.10.51:5000
+```
 
-`static/`
+Il database persistente dell’ambiente è:
 
-Migration:
+```text
+app_db
+```
 
-`migrations/`
+**Non usare `app_db` per test distruttivi.**
 
-Test:
-
-`tests/`
-
-Dockerfile e script di entrypoint sono nella root del repository.
-
-Mantenere questa struttura salvo motivazioni concrete concordate prima.
-
-Non suddividere il progetto in package, service layer, repository layer o altre architetture soltanto per principio.
+Quando servono test MariaDB distruttivi, creare un database/container temporaneo dedicato e rimuoverlo al termine.
 
 ---
 
-# Modello funzionale
+# 8. Modello dati attuale
 
 ## Partecipante
 
-Rappresenta una persona autorizzata a iscriversi ai laboratori.
+La primary key `Partecipante.id` è il **codice censimento AGESCI**.
 
-Il suo `id` corrisponde al **codice censimento AGESCI**.
+Campi persistiti:
 
-I codici censimento utilizzati nel progetto sono:
+* `id`
+* `nome`
+* `cognome`
+* `gruppo`
+* `zona`
+* `regione`
+* `email`
+* `sesso`
+* `foca`
+* `ruolo`
+* `incarico_altro`
+* `deve_iscriversi_sabato`
+* `includi_domenica`
+* `gruppo_domenica`
 
-* numerici;
-* interi positivi;
-* sequenziali;
-* senza zeri iniziali significativi.
+`gruppo` indica il gruppo scout.
 
-Il partecipante conserva codice censimento, nome, cognome e i campi anagrafici
-esplicitamente previsti dall'import CSV descritto sotto. Il gruppo domenicale
-è persistito separatamente dai dati aggiornabili dal CSV.
+`gruppo_domenica` indica invece l’assegnazione all’attività della domenica.
+
+Non confondere i due campi.
 
 ---
 
 ## Laboratorio
 
-Contiene almeno:
+Campi principali:
 
-* identificativo interno;
-* codice laboratorio;
-* titolo;
-* descrizione;
-* numero massimo di posti;
-* tipologia.
+* primary key interna `id`;
+* `id_lab`;
+* `titolo`;
+* `descrizione`;
+* `posti`;
+* `tipologia`.
 
-Le tipologie utilizzate sono:
+Tipologie:
 
-* `mattino`
-* `pomeriggio`
+```text
+mattino
+pomeriggio
+```
 
-Un laboratorio del mattino non può essere utilizzato come scelta del pomeriggio e viceversa.
+La chiave logica usata per import e gestione è:
+
+```text
+(tipologia, id_lab)
+```
+
+Non esiste volutamente un vincolo UNIQUE DB su questa coppia.
+
+Le operazioni amministrative di import/creazione vanno considerate seriali.
 
 ---
 
 ## Iscrizione
 
-Ogni partecipante può avere **una sola riga `Iscrizione`**.
+Ogni partecipante può avere al massimo una riga `Iscrizione`.
 
-Il database deve garantire l'unicità dell'iscrizione per partecipante.
-
-L'iscrizione contiene:
+Contiene:
 
 * partecipante;
-* scelta del sabato mattina;
-* scelta del sabato pomeriggio;
-* data/ora dell'ultimo aggiornamento.
+* scelta mattino;
+* scelta pomeriggio;
+* `non_partecipa_mattino`;
+* `non_partecipa_pomeriggio`;
+* `sottogruppo_mattino`;
+* `sottogruppo_pomeriggio`;
+* `data`.
 
-Le due scelte possono essere temporaneamente `NULL`, perché l'iscrizione viene completata progressivamente.
+I sottogruppi sono:
 
-### Iscrizione incompleta
+```text
+A
+B
+NULL
+```
 
-Una iscrizione è incompleta quando manca almeno una delle due scelte.
+`data` rappresenta l’ultimo aggiornamento dell’iscrizione ordinaria.
 
-Il caso normale previsto è:
-
-* mattino salvato;
-* pomeriggio ancora `NULL`.
-
-### Iscrizione completa
-
-Una iscrizione è completa quando:
-
-* `scelta_mattino` non è `NULL`;
-* `scelta_pomeriggio` non è `NULL`.
+Le operazioni amministrative manuali devono preservare il timestamp quando previsto dal comportamento attuale.
 
 ---
 
-## User
+# 9. Stato iscrizioni
 
-Rappresenta l'utente amministrativo.
+Stati consentiti:
 
-Gli utenti normali non possiedono account permanenti.
+```text
+aperte
+chiuse
+```
 
-I partecipanti vengono identificati tramite codice censimento e sessione temporanea Flask-Login.
+Conservati in `system_option` / `SysOption` con chiave:
 
----
+```text
+stato_iscrizioni
+```
 
-## SysOption
+Valori mancanti o invalidi devono comportarsi in modo sicuro come:
 
-La tabella `SysOption` viene utilizzata per semplici impostazioni applicative.
+```text
+chiuse
+```
 
-Tra queste:
+Il testo:
 
-* stato delle iscrizioni;
-* messaggio informativo;
-* timestamp ultimo import partecipanti;
-* timestamp ultimo import laboratori.
+```text
+messaggio_iscrizioni
+```
 
-Non creare nuove tabelle quando una semplice opzione chiave/valore è sufficiente.
+è solo un messaggio libero.
 
----
-
-# Stato delle iscrizioni
-
-Esistono soltanto due stati:
-
-* `aperte`
-* `chiuse`
-
-Il valore viene conservato in `SysOption` con chiave:
-
-`stato_iscrizioni`
-
-Se il valore:
-
-* manca;
-* è invalido;
-* non è riconosciuto;
-
-il comportamento sicuro deve essere:
-
-`chiuse`
+Non interpretarlo come scheduler, data o configurazione temporale.
 
 ---
 
-## Messaggio informativo
+# 10. Flusso partecipante
 
-Esiste inoltre:
+## Identificazione
 
-`messaggio_iscrizioni`
+Il partecipante inserisce il codice censimento.
 
-È un semplice testo libero modificabile dall'amministratore.
+Il codice può essere verificato anche con iscrizioni chiuse.
 
-Può essere usato, per esempio, per scrivere:
+Il sistema mostra nome e cognome e richiede conferma esplicita dell’identità.
 
-* quando apriranno le iscrizioni;
-* quando chiuderanno;
-* comunicazioni operative.
-
-Non interpretare questo testo come data o orario.
-
-Non introdurre scheduler o automazioni temporali salvo richiesta esplicita.
+L’identità confermata viene registrata nella sessione.
 
 ---
 
-# Flusso utente definitivo
+# 11. Flag sabato
 
-Il flusso ordinario è **strettamente sequenziale**.
+## `deve_iscriversi_sabato = false`
 
-## 1. Homepage
+La persona:
 
-Il partecipante apre la homepage.
+* non deve scegliere laboratori;
+* non deve scegliere “non partecipo”;
+* non deve essere considerata incompleta;
+* deve andare direttamente al riepilogo;
+* non deve poter forzare le route di scelta tramite GET/POST.
 
-La pagina mostra:
+Non creare automaticamente una riga `Iscrizione`.
 
-* titolo;
-* stato delle iscrizioni;
-* messaggio informativo;
-* breve spiegazione;
-* campo codice censimento;
-* accesso amministratori.
+Nei riepiloghi/export mostrare:
 
-Il codice censimento deve poter essere verificato anche quando le iscrizioni sono chiuse.
+```text
+Iscrizione non richiesta
+```
 
 ---
 
-## 2. Verifica codice censimento
+## `deve_iscriversi_sabato = true`
 
-Il partecipante inserisce il proprio codice.
+Flusso ordinario:
 
-Il sistema verifica che il codice sia presente nell'elenco dei partecipanti importati.
+1. scelta mattino;
+2. salvataggio;
+3. scelta pomeriggio;
+4. salvataggio;
+5. riepilogo.
 
-Se non esiste, mostra un messaggio chiaro.
+Il flusso progressivo, la ripresa da stato incompleto e la modifica delle scelte devono continuare a funzionare.
 
-Se esiste, mostra:
+---
 
+# 12. Stato di una fascia del sabato
+
+Ogni fascia può trovarsi in uno dei seguenti stati.
+
+## Laboratorio scelto
+
+```text
+scelta != NULL
+non_partecipa = false
+```
+
+## Rinuncia esplicita
+
+```text
+scelta = NULL
+non_partecipa = true
+```
+
+Visualizzazione:
+
+```text
+Non partecipa
+```
+
+## Scelta non ancora effettuata
+
+```text
+scelta = NULL
+non_partecipa = false
+```
+
+Visualizzazione:
+
+```text
+Non iscritto
+```
+
+## Iscrizione non richiesta
+
+Quando:
+
+```text
+deve_iscriversi_sabato = false
+```
+
+Visualizzazione:
+
+```text
+Iscrizione non richiesta
+```
+
+Non confondere questi stati.
+
+---
+
+# 13. Capienza e concorrenza
+
+Nel normale flusso partecipante il server è l’autorità finale.
+
+La disponibilità mostrata dal frontend è informativa.
+
+Per il salvataggio:
+
+* usare transazioni brevi;
+* bloccare le righe necessarie con `FOR UPDATE`;
+* ricontare gli occupanti dopo il lock;
+* verificare nuovamente la capienza.
+
+Un laboratorio pieno:
+
+* rimane visibile;
+* non è selezionabile da nuovi utenti;
+* può essere mantenuto da chi lo possiede già.
+
+In contesa sull’ultimo posto, un solo partecipante deve ottenerlo.
+
+---
+
+# 14. Override amministrativo
+
+L’admin può modificare un partecipante e forzare manualmente:
+
+* laboratorio mattino;
+* A/B mattino;
+* laboratorio pomeriggio;
+* A/B pomeriggio;
+* gruppo domenica.
+
+Queste sono operazioni amministrative straordinarie.
+
+## Laboratori sabato
+
+L’admin può assegnare un laboratorio anche oltre la capienza.
+
+Questo NON modifica il comportamento del normale partecipante.
+
+Se viene assegnato almeno un laboratorio:
+
+```text
+deve_iscriversi_sabato = true
+```
+
+Se viene assegnato un laboratorio nella fascia:
+
+```text
+non_partecipa_* = false
+```
+
+Se il laboratorio viene rimosso:
+
+* scelta → `NULL`;
+* relativo A/B → `NULL`.
+
+A/B può essere:
+
+```text
+NULL
+A
+B
+```
+
+e può essere modificato anche dopo il calcolo automatico.
+
+---
+
+## Domenica
+
+L’admin può:
+
+* assegnare;
+* cambiare;
+* rimuovere
+
+il gruppo domenicale.
+
+Quando viene assegnato un gruppo:
+
+```text
+includi_domenica = true
+```
+
+La rimozione del gruppo non modifica automaticamente il flag.
+
+Un successivo ricalcolo può sovrascrivere l’override manuale.
+
+---
+
+# 15. Campi obbligatori nella gestione manuale
+
+Per creazione/modifica manuale sono obbligatori:
+
+* codice censimento in creazione;
 * nome;
-* cognome.
+* cognome;
+* gruppo;
+* zona;
+* regione;
+* email valida;
+* sesso;
+* FoCa;
+* flag sabato;
+* flag domenica.
+
+`ruolo` / “Partecipo in qualità di” è facoltativo.
+
+`incarico_altro` è obbligatorio solo quando il ruolo indica “Altro”.
+
+Gli errori devono preservare i valori compilati nel form.
 
 ---
 
-## 3. Conferma esplicita dell'identità
+# 16. Reset sabato singolo
 
-Il partecipante NON deve essere portato immediatamente ai laboratori.
+L’admin può azzerare il sabato di una singola persona.
 
-Deve prima confermare esplicitamente di essere la persona indicata.
+L’azione:
 
-Concettualmente:
+* è POST;
+* richiede `admin_required`;
+* elimina la riga `Iscrizione`.
 
-`Sei Mario Rossi?`
+Vengono quindi rimossi:
 
-Azioni:
+* scelta mattino;
+* scelta pomeriggio;
+* rinunce;
+* A/B.
 
-* `Sì, sono io`
-* `Cambia codice`
+Restano invariati:
 
-Deve inoltre essere mostrata l'indicazione che, se la persona visualizzata non è corretta, bisogna:
-
-* verificare il codice inserito;
-* eventualmente contattare gli Incaricati nazionali EG all'indirizzo `eg@agesci.it`.
-
-La conferma dell'identità deve essere registrata nella sessione e non essere soltanto grafica.
-
-Una verifica fallita deve eliminare eventuali sessioni temporanee precedenti riferite ad altri partecipanti.
-
----
-
-# Instradamento dopo conferma identità
-
-Dopo `Sì, sono io`, il sistema decide automaticamente il punto corretto del percorso.
-
-## Nessuna scelta salvata
-
-Se:
-
-* mattino = `NULL`;
-* pomeriggio = `NULL`;
-
-allora:
-
-### iscrizioni aperte
-
-portare alla scelta del sabato mattina.
-
-### iscrizioni chiuse
-
-mostrare chiaramente:
-
-`Non risulta ancora alcuna iscrizione ai laboratori.`
+* Partecipante;
+* anagrafica;
+* flag;
+* gruppo domenica.
 
 ---
 
-## Solo mattino salvato
+# 17. Import partecipanti
 
-Se:
+Formato:
 
-* mattino valorizzato;
-* pomeriggio = `NULL`;
+* CSV UTF-8;
+* separatore `;`;
+* intestazioni nella prima riga.
 
-allora:
+Il vecchio Excel partecipanti non è supportato.
 
-### iscrizioni aperte
+Il CSV viene letto nel browser tramite SheetJS.
 
-portare direttamente alla scelta del sabato pomeriggio.
+Non usare:
 
-### iscrizioni chiuse
+```javascript
+split(';')
+```
 
-mostrare la scelta già effettuata e indicare chiaramente che l'iscrizione è incompleta.
+Il parser deve supportare:
 
----
-
-## Iscrizione completa
-
-Se mattino e pomeriggio sono entrambi valorizzati:
-
-portare al riepilogo.
-
-### iscrizioni aperte
-
-consentire modifica mattino e pomeriggio.
-
-### iscrizioni chiuse
-
-mostrare soltanto la consultazione.
+* BOM UTF-8;
+* accenti;
+* virgolette;
+* `;` dentro campi quotati;
+* newline Windows/Linux.
 
 ---
 
-# Iscrizione progressiva
+# 18. Campi importati dal CSV
 
-Il processo ordinario è obbligatoriamente:
+Mapping:
 
-1. scelta sabato mattina;
-2. salvataggio reale del mattino;
-3. scelta sabato pomeriggio;
-4. salvataggio reale del pomeriggio;
-5. riepilogo finale.
+| CSV                                                   | Partecipante           |
+| ----------------------------------------------------- | ---------------------- |
+| Codice                                                | id                     |
+| Nome                                                  | nome                   |
+| Cognome                                               | cognome                |
+| Gruppo                                                | gruppo                 |
+| Zona                                                  | zona                   |
+| Regione                                               | regione                |
+| EmailContatto                                         | email                  |
+| Sesso                                                 | sesso                  |
+| FoCa                                                  | foca                   |
+| Partecipo in qualità di:                              | ruolo                  |
+| Se hai indicato "altro" specifica incarico:           | incarico_altro         |
+| Partecipa ai laboratori di sabato come partecipante   | deve_iscriversi_sabato |
+| Partecipa ai laboratori di domenica come partecipante | includi_domenica       |
 
-L'utente non può iniziare dal pomeriggio se il mattino non è stato salvato.
+Non persistono:
 
-Non esiste una conferma globale finale che assegna entrambi i posti insieme.
+* BC;
+* PIC;
+* DataNascita;
+* CAP;
+* Città;
+* PR;
+* EmailReferente;
+* altre colonne.
 
-Ogni fascia viene salvata realmente quando il partecipante conferma quella scelta.
+L’email applicativa proviene esclusivamente da:
 
----
-
-# Scelta del sabato mattina
-
-La pagina deve mostrare esclusivamente laboratori di tipo:
-
-`mattino`
-
-L'interfaccia deve essere mobile-first e utilizzare preferibilmente card.
-
-Ogni laboratorio mostra almeno:
-
-* codice;
-* titolo;
-* descrizione;
-* posti disponibili;
-* stato disponibile/completo;
-* azione di selezione.
-
-Il pulsante di conferma deve essere disabilitato finché non esiste una scelta valida.
-
-Quando il partecipante conferma:
-
-* il backend verifica nuovamente tutto;
-* il laboratorio viene realmente assegnato;
-* il posto viene occupato;
-* la scelta viene salvata nel database.
-
-Se non esiste ancora la riga `Iscrizione`, deve essere creata.
-
-Dopo il salvataggio il partecipante passa automaticamente al pomeriggio.
+```text
+EmailContatto
+```
 
 ---
 
-# Scelta del sabato pomeriggio
+# 19. Preview import partecipanti
 
-La pagina mostra esclusivamente laboratori di tipo:
+L’import è un processo a due fasi.
 
-`pomeriggio`
+## Preview
 
-La logica è analoga al mattino.
+1. selezione CSV;
+2. parsing;
+3. validazione;
+4. confronto con DB;
+5. anteprima.
 
-Alla conferma:
+Durante la preview:
 
-* viene aggiornata la stessa riga `Iscrizione`;
-* viene assegnato realmente il posto;
-* l'iscrizione diventa completa.
+* nessuna scrittura;
+* nessun timestamp aggiornato;
+* nessuna modifica a iscrizioni o gruppi.
 
-Dopo il salvataggio si passa al riepilogo.
+Mostrare:
 
----
+* nuovi;
+* modificati;
+* invariati;
+* totale.
 
-# Riepilogo finale
+Il dettaglio deve indicare i campi realmente cambiati.
 
-Il riepilogo mostra chiaramente:
+Esempio:
 
-## Sabato mattina
+```text
+12345 – Rossi Mario: nuovo
+67890 – Bianchi Luca: modificati Email, Regione, Zona
+```
 
-* codice laboratorio;
-* titolo.
-
-## Sabato pomeriggio
-
-* codice laboratorio;
-* titolo.
-
-Deve inoltre comunicare chiaramente che il partecipante ha completato quanto richiesto.
-
-Quando le iscrizioni sono aperte mostra:
-
-* `Modifica mattino`
-* `Modifica pomeriggio`
-
-Quando sono chiuse mostra soltanto i dati salvati.
-
-Deve esistere una navigazione chiara verso la homepage.
+Il dettaglio lungo deve essere collassabile.
 
 ---
 
-# Modifica delle scelte
+## Conferma import
 
-Mattino e pomeriggio possono essere modificati separatamente.
+Solo dopo:
 
-## Modifica mattino
+```text
+Conferma import
+```
 
-Il partecipante vede i laboratori del mattino e la scelta corrente.
+il backend ripete validazione e confronto usando lo stato DB corrente e applica la transazione.
 
-Se sceglie un nuovo laboratorio:
-
-* verificare la disponibilità;
-* non liberare la scelta precedente prima che la nuova sia stata validata;
-* salvare il nuovo laboratorio;
-* tornare al riepilogo.
-
-Se il nuovo laboratorio non è più disponibile:
-
-* la vecchia scelta deve rimanere invariata;
-* mostrare un messaggio chiaro.
-
-## Modifica pomeriggio
-
-Stessa logica applicata alla fascia pomeridiana.
+Non fidarsi del risultato della preview salvato nel browser.
 
 ---
 
-# Laboratori completi
+# 20. Semantica import partecipanti
 
-Un laboratorio con zero posti disponibili:
+Il comportamento è UPSERT incrementale.
 
-* deve rimanere visibile;
-* deve mostrare chiaramente `Completo`;
-* non deve essere selezionabile da chi non lo possiede già.
+## Codice nuovo
 
-Se il laboratorio è già assegnato al partecipante:
+Inserimento.
 
-deve poter essere mantenuto anche se risulta completo.
+## Codice esistente
 
-Può essere mostrato un messaggio tipo:
+Aggiornare esclusivamente i campi provenienti dal CSV.
 
-`Completo — il tuo posto è già riservato`.
+## Codice assente dal CSV
 
----
+Non modificare e non eliminare.
 
-# Disponibilità dinamica
+L’import NON deve modificare:
 
-Durante la scelta dei laboratori la disponibilità viene aggiornata periodicamente.
+* scelte sabato;
+* rinunce;
+* timestamp iscrizione;
+* A/B;
+* gruppo domenica.
 
-La frequenza indicativa è circa:
+Anche se `includi_domenica` diventa `false`, un gruppo domenicale esistente rimane fino al successivo ricalcolo.
 
-8 secondi.
-
-Non usare websocket.
-
-Non introdurre caching, Redis o altri sistemi aggiuntivi.
-
-Se un laboratorio selezionato ma non ancora confermato diventa pieno:
-
-* invalidare la selezione;
-* informare chiaramente l'utente;
-* impedire il salvataggio;
-* richiedere una nuova scelta.
-
-Una scelta già salvata nel database è invece realmente assegnata e non viene invalidata dal polling.
+L’import è atomico.
 
 ---
 
-# Concorrenza e assegnazione posti
+# 21. Flag CSV
 
-La disponibilità mostrata dal browser è soltanto informativa.
+Valori true accettati, ignorando maiuscole/minuscole e spazi:
 
-Il server è sempre l'autorità finale.
+```text
+Sì
+Si
+S
+Yes
+True
+1
+```
 
-L'assegnazione deve essere protetta tramite:
+Valori false:
 
-* transazioni MariaDB brevi;
-* `SELECT ... FOR UPDATE`;
-* lock sulle righe dei laboratori coinvolti;
-* conteggio aggiornato degli occupanti dopo il lock.
+```text
+No
+N
+False
+0
+```
 
-Non utilizzare la riga globale `SysOption` per serializzare tutte le iscrizioni.
+Vuoto o sconosciuto:
 
-Non introdurre:
-
-* code di accesso;
-* prenotazioni temporanee;
-* hold del posto;
-* countdown;
-* Redis;
-* websocket.
-
-In caso di contesa sull'ultimo posto:
-
-* la prima transazione che conclude correttamente ottiene il posto;
-* le successive devono ricevere un errore chiaro, normalmente HTTP `409`.
+**errore bloccante.**
 
 ---
 
-# Validazione server-side
+# 22. Import laboratori
 
-Il backend non deve mai fidarsi del frontend.
+Formato Excel con due fogli:
 
-Ogni salvataggio deve verificare almeno:
+```text
+mattino
+pomeriggio
+```
 
-* sessione valida;
-* identità confermata;
-* partecipante esistente;
-* stato iscrizioni;
-* laboratorio esistente;
-* tipologia corretta;
-* capienza;
-* ordine previsto del flusso.
+Colonne:
 
-Payload non validi devono produrre risposte coerenti e comprensibili, non errori 500 generici quando evitabili.
+```text
+id
+titolo
+descrizione
+posti
+```
 
----
+La chiave di riconciliazione è:
 
-# Area amministrativa
+```text
+(tipologia, id_lab)
+```
 
-L'area amministrativa comprende:
+Comportamento:
 
-* login;
-* logout;
-* cambio password;
-* stato iscrizioni;
-* messaggio informativo;
-* import partecipanti;
-* import laboratori;
-* ultimo import partecipanti;
-* ultimo import laboratori;
-* gestione iscrizioni;
-* riepilogo statistico.
+* zero corrispondenze → nuovo;
+* una → aggiornamento preservando primary key;
+* più di una → errore;
+* assente dal file → invariato.
 
-Non creare funzionalità amministrative ulteriori salvo richiesta esplicita.
+Non cancellare laboratori durante il reimport.
 
 ---
 
-# Gestione manuale essenziale
+# 23. Preview import laboratori
 
-L'admin può creare e modificare partecipanti dalla gestione iscrizioni, usando
-form dedicati e le stesse validazioni dell'import CSV. Il codice censimento
-è immutabile in modifica, anche per richieste POST manipolate. I due flag
-richiedono una scelta esplicita; le creazioni non producono iscrizioni o gruppi.
+Anche l’import laboratori è a due fasi.
 
-Gestione dati mostra i laboratori e i link ai form di aggiunta/modifica.
-Codice e fascia non sono modificabili; per una nuova coppia già presente la
-creazione viene rifiutata. Titolo, descrizione e posti sono validati come
-nell'import. Il numero di iscritti viene verificato sotto lock del laboratorio
-prima di salvare la capienza. Nessun nuovo vincolo UNIQUE.
+Prima della scrittura mostra:
 
-Il reset singolo è POST e protetto da admin_required, con conferma JavaScript
-nella gestione iscrizioni. Elimina esclusivamente la riga Iscrizione: comprende
-scelte, rinunce e A/B, preservando tutti i dati del Partecipante e la domenica.
-Bloccare prima il partecipante, poi i laboratori in ordine di ID, coerentemente
-con il salvataggio delle scelte. Gli errori DB richiedono rollback completo.
-Non introdurre eliminazioni individuali di partecipanti/laboratori né modificare
-i timestamp degli import con questi form.
+* nuovi;
+* modificati;
+* invariati;
+* totale;
+* dettaglio campi realmente cambiati.
 
----
+Esempio:
 
-# Dashboard iscrizioni
+```text
+mattino / L01 – nuovo
+pomeriggio / L05 – modificati Titolo, Posti
+```
 
-La pagina di gestione iscrizioni mostra almeno:
+La preview non modifica il database.
 
-* totale partecipanti importati;
-* iscrizioni complete;
-* iscrizioni incomplete;
-* partecipanti che non hanno iniziato;
-* percentuale di completamento;
-* semplice rappresentazione grafica;
-* elenco delle iscrizioni.
-
-## Completati
-
-Partecipanti con:
-
-* mattino valorizzato;
-* pomeriggio valorizzato.
-
-## Incompleti
-
-Partecipanti con almeno una riga `Iscrizione`, ma una delle due scelte mancante.
-
-## Non iniziati
-
-Partecipanti importati senza alcuna riga `Iscrizione`.
-
-I contatori vengono calcolati dai dati correnti.
-
-Non persistere statistiche aggregate nel database.
+La conferma ripete validazioni e confronto lato server.
 
 ---
 
-# Data dell'iscrizione
+# 24. Capienza negli import laboratori
 
-Il campo `Iscrizione.data` viene aggiornato a ogni salvataggio o modifica.
+Una riduzione di capienza è consentita solo se:
 
-Nell'interfaccia amministrativa va quindi interpretato come:
+```text
+nuovi_posti >= iscritti effettivi
+```
 
-`Ultimo aggiornamento`
+Le rinunce non occupano posto.
 
-e non necessariamente come data della prima iscrizione.
-
-Non aggiungere una seconda data salvo richiesta esplicita.
-
----
-
-# Cambio password amministratore
-
-La pagina di cambio password deve richiedere:
-
-* password attuale;
-* nuova password;
-* conferma nuova password.
-
-Il backend deve:
-
-* verificare la password attuale;
-* verificare coincidenza delle nuove password;
-* salvare tramite hashing Werkzeug.
-
-Il frontend deve inoltre verificare immediatamente la coincidenza dei due nuovi campi e impedire l'invio se non coincidono.
-
-La validazione client-side non sostituisce quella server-side.
+L’admin può superare manualmente la capienza assegnando una persona, ma questo non autorizza un import a ridurre indiscriminatamente la capienza sotto gli iscritti.
 
 ---
 
-# Import partecipanti CSV
+# 25. Atomicità degli import
 
-L'import partecipanti accetta esclusivamente CSV UTF-8 separati da `;`, con
-intestazioni nella prima riga. Il vecchio Excel BC non è più supportato.
-La lettura avviene nel browser con SheetJS 0.18.5 già caricato dall'admin:
-non usare un parser basato su `split(';')`.
+Partecipanti e laboratori devono rispettare:
 
-Le intestazioni dei 13 campi da importare sono tutte obbligatorie, anche quando
-il valore è facoltativo. Le colonne possono essere riordinate. Sono supportati
-BOM UTF-8, accenti, campi quotati, delimitatori e newline nei campi quotati,
-terminazioni Windows/Linux. Le righe completamente vuote sono ignorate.
-
-| Intestazione CSV | Campo Partecipante |
-|---|---|
-| Codice | id |
-| Nome | nome |
-| Cognome | cognome |
-| Gruppo | gruppo |
-| Zona | zona |
-| Regione | regione |
-| EmailContatto | email |
-| Sesso | sesso |
-| FoCa | foca |
-| Partecipo in qualità di: | ruolo |
-| Se hai indicato "altro" specifica incarico: | incarico_altro |
-| Partecipa ai laboratori di sabato come partecipante | deve_iscriversi_sabato |
-| Partecipa ai laboratori di domenica come partecipante | includi_domenica |
-
-## Privacy e minimizzazione dei dati
-
-Il CSV originale resta nel browser. Solo i campi della tabella vengono inviati
-come JSON al backend. `BC`, `PIC`, `DataNascita`, `CAP`, `Città`, `PR`,
-`EmailReferente` e qualsiasi altra colonna sono ignorati: non devono essere
-persistiti, mostrati in anteprima, loggati o inviati al server.
-L'email persistente proviene esclusivamente da `EmailContatto`.
-Non conservare il file originale o i suoi dati in localStorage/sessionStorage.
-
-## Validazione e anteprima
-
-La pagina legge il file e invia il payload minimo a
-`POST /import_iscritti/valida`, protetta per l'admin e senza scritture.
-Solo dopo la validazione mostra l'anteprima. `POST /import_iscritti` ripete
-la stessa validazione prima di importare.
-
-Controllare codice intero positivo fino a 2147483647, codici duplicati,
-nome/cognome obbligatori, tipi e lunghezze compatibili col DB e presenza dei
-campi previsti. I testi facoltativi vuoti diventano NULL, anche in aggiornamento.
-
-I flag sono obbligatori. Dopo trim e confronto senza distinzione tra maiuscole
-e minuscole: `Sì`, `Si`, `S`, `Yes`, `True`, `1` sono true;
-`No`, `N`, `False`, `0` sono false. Vuoti o sconosciuti bloccano l'import.
-Il payload normalizzato dell'anteprima usa boolean JSON, accettati dal backend.
-
-## Import incrementale
-
-Codice nuovo: inserimento. Codice già presente: aggiornamento di tutti e soli
-i campi CSV. Persona assente dal file: nessuna modifica e nessuna cancellazione.
-Non modificare iscrizioni sabato, rinunce, timestamp delle iscrizioni,
-sottogruppi A/B o gruppo domenicale. Anche il passaggio del flag domenica a
-false deve conservare un gruppo già assegnato fino al futuro ricalcolo.
-
-Validare l'intero payload prima di scrivere. Scritture e timestamp ultimo import
-appartengono alla stessa transazione; qualsiasi errore DB richiede rollback.
-Mostrare inseriti, aggiornati e totale elaborato dopo il commit.
-Gli aggiornati contano i codici già presenti, anche se i valori sono identici.
-
----
-
-# Import laboratori
-
-Il file laboratori contiene due fogli obbligatori:
-
-* `mattino`
-* `pomeriggio`
-
-Le colonne richieste sono:
-
-* `id`
-* `titolo`
-* `descrizione`
-* `posti`
-
-Entrambe le fasce devono contenere almeno un laboratorio valido.
-
-La capienza deve essere un intero positivo.
-
-Il backend deve validare completamente entrambi i fogli prima di inserire o aggiornare laboratori.
-I codici duplicati nello stesso foglio, dopo trim, bloccano l’import; lo stesso
-codice è consentito una volta in ciascuna fascia.
-
-Un payload invalido non deve modificare il database.
-
----
-
-# Reimport laboratori
-
-Il reimport è incrementale e consentito anche in presenza di iscrizioni.
-La chiave di riconciliazione è `(tipologia, id_lab)`: zero corrispondenze nel DB
-inseriscono un nuovo laboratorio; una aggiorna titolo, descrizione e posti,
-preservando la primary key; più corrispondenze bloccano l’intero import.
-Non aggiungere per ora un UNIQUE: alcune fixture contengono duplicati intenzionali.
-I laboratori assenti dal file restano invariati, compresi eventuali duplicati.
-
-Prima di scrivere, verificare anche tutte le riduzioni di capienza:
-il nuovo valore deve essere almeno pari alle scelte effettive nella fascia
-corrispondente. Le rinunce non occupano posti. Gli aumenti sono consentiti.
-Acquisire i lock dei laboratori in ordine di ID prima di contare, mantenendoli
-fino al commit/rollback. Non modificare iscrizioni, rinunce, timestamp o gruppi.
-Mostrare nuovi inseriti, aggiornati e totale soltanto dopo il commit.
-
-Senza UNIQUE, i lock sulle righe esistenti non garantiscono l’unicità di nuove
-coppie create da import amministrativi simultanei: eseguire gli import uno alla volta.
-
----
-
-# Atomicità degli import
-
-Gli import devono essere "tutto o niente".
+```text
+tutto o niente
+```
 
 In caso di errore:
 
 * rollback;
 * nessuna scrittura parziale;
-* nessuna cancellazione parziale;
-* timestamp ultimo import invariato.
+* timestamp import invariato.
 
-Il timestamp viene aggiornato soltanto dopo import completato con successo.
-
----
-
-# Ultimo import
-
-Memorizzare tramite `SysOption`:
-
-* ultimo import partecipanti;
-* ultimo import laboratori.
-
-Mostrare una data/ora leggibile per l'amministratore.
-
-Se l'import non è mai avvenuto:
-
-`Ultimo import: mai`
+Timestamp e modifiche appartengono alla stessa operazione riuscita.
 
 ---
 
-# Sicurezza
+# 26. Gruppi della domenica
 
-Applicare misure proporzionate a una piccola applicazione pubblica.
+Esistono esattamente **20 gruppi**.
 
-Prestare attenzione a:
+La persistenza nel DB è numerica:
 
-* validazione lato server;
-* gestione corretta delle sessioni;
-* protezione delle route amministrative;
-* hashing password;
-* minimizzazione dei dati;
-* query sicure;
-* escaping frontend;
-* messaggi di errore non sensibili;
-* rollback delle transazioni.
+```text
+1 ... 20
+```
 
-Segnalare vulnerabilità concrete.
+Mappa applicativa unica:
 
-Non introdurre infrastrutture di sicurezza sproporzionate senza richiesta.
+```text
+1  Avventura
+2  Bisogno
+3  Cura
+4  Dio
+5  Esperienza
+6  Fuori
+7  Gradualità
+8  Habitus
+9  Incontro
+10 Linguaggio
+11 Mistero
+12 Natura
+13 Occasione
+14 Progettualità
+15 Quotidiano
+16 Responsabilità
+17 Sfida
+18 Tempo
+19 Unicità
+20 Vivere
+```
 
----
+Usare la costante esistente:
 
-# Credenziali e produzione
+```text
+NOMI_GRUPPI_DOMENICA
+```
 
-Le credenziali di esempio utilizzate nello sviluppo NON devono essere riutilizzate in produzione.
-
-Prima del deploy devono essere impostati valori reali per almeno:
-
-* `SECRET_KEY`;
-* password MariaDB applicativa;
-* password root MariaDB;
-* password amministratore.
-
-La password amministratore iniziale `password` deve essere cambiata prima dell'apertura pubblica.
-
-HTTPS, cookie e protezioni CSRF vengono gestiti nella fase di hardening pre-produzione e non devono essere modificati unilateralmente senza richiesta.
-
----
-
-# Dipendenze
-
-Non aggiungere nuove dipendenze Python o JavaScript se la stessa funzionalità può essere realizzata chiaramente con quelle esistenti.
-
-Se sembra necessaria una nuova dipendenza, spiegare prima:
-
-* perché serve;
-* quale problema risolve;
-* perché lo stack attuale non è sufficiente.
-
-Non aggiornare dipendenze casualmente durante una task non correlata.
+Non duplicare questa mappa.
 
 ---
 
-# Database e migration
+# 27. Ricalcolo domenica
 
-Quando una modifica richiede un cambiamento dello schema:
+Considerare solo:
 
-* usare Flask-Migrate/Alembic;
-* non modificare manualmente il database come soluzione definitiva;
-* mantenere compatibilità MariaDB.
+```text
+includi_domenica = true
+```
 
-Il deploy finale partirà da un database nuovo.
+Criteri, in ordine:
 
-Il percorso di migration su database vuoto deve quindi essere sempre verificabile.
+1. Regione;
+2. ruolo;
+3. FoCa;
+4. Sesso.
 
-Non spendere tempo a rendere perfetti percorsi di downgrade o upgrade storici non utilizzati, salvo problemi concreti.
+Riutilizzare l’algoritmo esistente:
+
+* categorie rare;
+* greedy;
+* scambi locali;
+* bilanciamento numerico;
+* comportamento deterministico.
+
+Non progettare un algoritmo nuovo senza richiesta.
+
+Il ricalcolo:
+
+* salva `gruppo_domenica`;
+* pulisce gli esclusi;
+* è atomico;
+* non modifica il sabato.
+
+Con meno di 20 persone sono ammessi gruppi vuoti.
+
+Con zero persone il risultato è valido.
 
 ---
 
-# Test
+# 28. Visualizzazione domenica
 
-I test automatici possono utilizzare SQLite per la logica applicativa che non dipende dal database specifico.
+## Non richiesta
 
-Le funzionalità MariaDB-specifiche devono essere testate su MariaDB.
+```text
+includi_domenica = false
+```
 
-In particolare:
+Mostrare:
 
-* migration;
-* unique constraint;
-* nullable;
-* `SELECT ... FOR UPDATE`;
-* concorrenza;
-* ultimo posto.
+```text
+Partecipazione ai gruppi della domenica: non richiesta
+```
 
-I test MariaDB che cancellano dati devono avere protezioni rigide contro l'esecuzione accidentale su database persistenti.
+Ignorare eventuali vecchie assegnazioni persistite.
 
-Non eseguire test distruttivi contro database di sviluppo o produzione.
+## Richiesta ma non assegnata
 
----
+```text
+Non ancora assegnato
+```
 
-# Ambiente di sviluppo
+## Assegnata
 
-L'ambiente di test è separato dalla produzione.
+Lato utente mostrare il nome:
 
-Repository:
+```text
+Gradualità
+```
 
-`/opt/pmsea-test/app`
+Lato admin può essere utile:
 
-Infrastruttura Docker:
-
-`/opt/pmsea-test/infra`
-
-Applicazione di test:
-
-`http://192.168.10.51:5000`
-
-Lo stack contiene essenzialmente:
-
-* applicazione Flask;
-* MariaDB.
-
-Non aggiungere servizi senza necessità concreta.
-
-Per gestire lo stack:
-
-```bash
-cd /opt/pmsea-test/infra
-docker compose ...
+```text
+7 – Gradualità
 ```
 
 ---
 
-# Git
+# 29. Gruppi A/B del sabato
 
-Branch di sviluppo:
+A/B viene calcolato separatamente per:
 
-`dev`
+* ogni laboratorio;
+* ogni fascia.
 
-Branch stabile/produzione:
+La stessa persona può quindi essere:
 
-`main`
+```text
+A mattino
+B pomeriggio
+```
 
-## Remote
+Considerare solo persone realmente iscritte al laboratorio.
 
-`origin`
+Escludere:
 
-→ fork di sviluppo:
+* scelta `NULL`;
+* “non partecipa”.
 
-`fracfe/perMeSeiAvventura_laboratori`
+Criteri:
 
-`upstream`
+1. Regione;
+2. ruolo;
+3. FoCa;
+4. Sesso.
 
-→ repository originale:
+Riutilizzare lo stesso nucleo algoritmico della domenica.
 
-`calminaro/perMeSeiAvventura_laboratori`
+Gruppo algoritmo:
 
-Il lavoro ordinario avviene su:
+```text
+1 → A
+2 → B
+```
 
-`dev`
+Persistire esclusivamente:
 
-del fork.
-
-Le modifiche destinate al repository originale verranno successivamente proposte tramite pull request.
-
-Prima di modificare:
-
-1. controllare branch;
-2. controllare `git status`;
-3. verificare modifiche già presenti.
-
-Non cancellare o sovrascrivere modifiche non proprie.
-
-Non eseguire:
-
-* commit;
-* push;
-* merge;
-* reset;
-* rebase;
-* operazioni distruttive;
-
-senza richiesta esplicita.
-
-Non lavorare direttamente su `main` salvo richiesta esplicita.
+```text
+A
+B
+NULL
+```
 
 ---
 
-# Metodo di lavoro
+# 30. Quando può essere calcolato A/B
 
-Il progetto viene sviluppato in modo iterativo.
+Il ricalcolo A/B è consentito solo quando:
 
-Per ogni attività:
+```text
+stato_iscrizioni = chiuse
+```
 
-1. leggere il codice coinvolto;
-2. comprendere il comportamento esistente;
-3. verificare `AGENTS.md`;
-4. identificare la soluzione più semplice;
-5. implementare esclusivamente quanto richiesto;
-6. effettuare test pertinenti;
-7. riportare chiaramente:
+La protezione deve esistere:
 
-   * file modificati;
-   * comportamento cambiato;
-   * migration eventuali;
-   * test eseguiti;
-   * problemi rimasti;
-   * `git status`.
+* nella UI;
+* nel backend.
 
-Quando la richiesta è esclusivamente di analisi:
+Con iscrizioni aperte:
 
-**non modificare alcun file.**
+* non calcolare;
+* non modificare A/B esistenti;
+* mostrare un messaggio chiaro.
 
 ---
 
-# Principio fondamentale: evitare overengineering
+# 31. Ricalcolo A/B
 
-Questa applicazione deve servire circa 400 persone per uno specifico evento e poi verrà dismessa.
+Il ricalcolo globale:
 
-Non sono obiettivi del progetto:
+* pulisce le vecchie A/B;
+* ricalcola tutti i laboratori;
+* è atomico;
+* non modifica scelte;
+* non modifica rinunce;
+* non modifica timestamp;
+* non modifica domenica.
 
-* scalabilità a milioni di utenti;
-* alta disponibilità distribuita;
-* microservizi;
-* architetture event-driven;
-* repository pattern;
-* service layer generalizzati;
-* sistemi di caching complessi;
-* code asincrone;
-* Redis;
-* websocket;
-* prenotazioni temporanee;
-* sistemi di configurazione sofisticati;
-* astrazioni create “per il futuro”;
-* generalizzazioni per casi d'uso inesistenti.
+Non ricalcolare automaticamente dopo ogni modifica manuale.
 
-Un controllo semplice e corretto nel punto appropriato è spesso preferibile a un nuovo livello architetturale.
+Procedura operativa prevista:
 
----
+```text
+chiusura iscrizioni
+→ ricalcolo A/B
+```
 
-# Frontend
-
-Mantenere:
-
-* Bootstrap;
-* Alpine.js;
-* JavaScript semplice;
-* rendering Jinja.
-
-L'applicazione deve funzionare bene soprattutto da smartphone.
-
-Privilegiare:
-
-* testi comprensibili;
-* pulsanti grandi e chiari;
-* card;
-* flussi guidati;
-* feedback immediato;
-* gerarchia visiva semplice;
-* navigazione verso homepage;
-* leggibilità delle descrizioni.
-
-Non sostituire il frontend con React, Vue, Angular o altri framework.
+Se successivamente un admin modifica una scelta, può ricalcolare nuovamente.
 
 ---
 
-# Compatibilità
+# 32. Dashboard admin
 
-Non rompere funzionalità già operative per implementarne una nuova.
+I contatori del sabato considerano come popolazione rilevante solo:
 
-Quando pertinente verificare sempre:
+```text
+deve_iscriversi_sabato = true
+```
 
-* homepage;
-* login admin;
-* logout;
+Chi ha sabato non richiesto deve avere stato:
+
+```text
+Non richiesta
+```
+
+e non deve essere contato tra:
+
+* incompleti;
+* non iniziati.
+
+Il totale generale partecipanti continua a includere tutti.
+
+Non persistere statistiche aggregate.
+
+---
+
+# 33. Export iscrizioni
+
+Esistono due export distinti.
+
+## Generale
+
+Nome:
+
+```text
+iscrizioni_generali_<data>.xlsx
+```
+
+## Per laboratorio
+
+Nome:
+
+```text
+iscrizioni_per_laboratorio_<data>.xlsx
+```
+
+Verificare sempre `Content-Disposition`.
+
+---
+
+# 34. Foglio generale
+
+Deve includere tutti i partecipanti.
+
+Campi principali:
+
+* codice;
+* nome;
+* cognome;
+* gruppo;
+* zona;
+* regione;
+* email;
+* laboratorio mattino;
+* A/B mattino;
+* laboratorio pomeriggio;
+* A/B pomeriggio.
+
+---
+
+# 35. Semantica export sabato
+
+La colonna laboratorio e la colonna A/B non devono lasciare stati ambigui.
+
+| Stato                            | Laboratorio              | A/B                      |
+| -------------------------------- | ------------------------ | ------------------------ |
+| sabato non richiesto             | Iscrizione non richiesta | Iscrizione non richiesta |
+| scelta non fatta                 | Non iscritto             | Non iscritto             |
+| rinuncia                         | Non partecipa            | Non partecipa            |
+| laboratorio scelto, A/B assente  | laboratorio              | Non assegnato            |
+| laboratorio scelto, A/B presente | laboratorio              | A oppure B               |
+
+Nei fogli del singolo laboratorio:
+
+* mostrare solo iscritti effettivi;
+* A/B assente → `Non assegnato`.
+
+---
+
+# 36. File comunicazioni
+
+Il file comunicazioni usa esclusivamente il database.
+
+Non esiste più il merge operativo con Excel domenica.
+
+Include tutti i partecipanti una volta sola.
+
+Campi:
+
+* codice;
+* nome;
+* cognome;
+* email;
+* sabato mattino;
+* A/B mattino;
+* sabato pomeriggio;
+* A/B pomeriggio;
+* domenica.
+
+Email:
+
+```text
+Partecipante.email
+```
+
+Domenica:
+
+* flag false → `Iscrizione non richiesta`;
+* flag true + gruppo `NULL` → `Non assegnato`;
+* gruppo presente → nome da `NOMI_GRUPPI_DOMENICA`.
+
+La generazione è read-only.
+
+Non ricalcolare domenica o A/B durante gli export.
+
+---
+
+# 37. Area amministrativa operativa
+
+Devono essere raggiungibili in modo chiaro almeno:
+
+* login/logout;
 * cambio password;
 * stato iscrizioni;
+* messaggio informativo;
 * import partecipanti;
 * import laboratori;
-* verifica codice censimento;
+* gestione partecipanti;
+* gestione laboratori;
+* reset sabato singolo;
+* modifica manuale assegnazioni;
+* suddivisione domenica;
+* gruppi A/B;
+* export;
+* comunicazioni.
+
+Non lasciare nel percorso operativo riferimenti a vecchi flussi sostituiti.
+
+---
+
+# 38. Test
+
+## SQLite
+
+Usare per:
+
+* logica applicativa;
+* route;
+* validazioni;
+* rendering;
+* export;
+* import;
+* algoritmi.
+
+## MariaDB
+
+Usare quando pertinente per:
+
+* migration;
+* lock;
+* concorrenza;
+* `FOR UPDATE`;
+* CHECK;
+* ultimo posto;
+* comportamento del driver.
+
+Differenze SQLite/MariaDB documentate e accettate:
+
+* alcuni CHECK MariaDB/PyMySQL possono produrre `OperationalError 4025`;
+* valori troppo lunghi possono produrre `DataError 1406`;
+* la collation MariaDB può essere case-insensitive per A/B.
+
+Non modificare schema/collation solo per uniformare eccezioni dei test quando la semantica applicativa è corretta.
+
+L’applicazione deve comunque scrivere solo `A` e `B` maiuscoli.
+
+---
+
+# 39. Test distruttivi
+
+Le suite che cancellano o ricreano dati devono usare un database temporaneo dedicato.
+
+**Mai eseguire suite distruttive su `app_db`.**
+
+Prima di un test distruttivo verificare esplicitamente il target DB.
+
+Al termine rimuovere container/database temporanei.
+
+---
+
+# 40. Migrazioni
+
+Ogni modifica allo schema deve usare Alembic.
+
+Non modificare manualmente il DB come soluzione definitiva.
+
+Verificare, quando pertinente:
+
+* upgrade da DB vuoto;
+* compatibilità MariaDB;
+* conservazione dati esistenti.
+
+Il container esegue le migration all’avvio secondo la configurazione esistente.
+
+Prima di concludere che una migrazione non esiste o non funziona, verificare che il container sia stato ricostruito con il codice corrente.
+
+---
+
+# 41. Sicurezza
+
+Applicare misure proporzionate al progetto.
+
+Prestare attenzione a:
+
+* validazione server-side;
+* route admin;
+* sessioni;
+* hashing password;
+* minimizzazione dei dati;
+* escaping;
+* rollback;
+* errori non sensibili.
+
+Non introdurre infrastrutture di sicurezza sproporzionate senza richiesta.
+
+Il backend non deve mai fidarsi del frontend.
+
+---
+
+# 42. Privacy
+
+Persistire esclusivamente i dati necessari.
+
+Il CSV originale dei partecipanti:
+
+* rimane nel browser;
+* non viene caricato integralmente sul server;
+* non viene salvato;
+* non viene memorizzato in localStorage/sessionStorage.
+
+Campi non previsti dal mapping devono essere ignorati.
+
+---
+
+# 43. Frontend
+
+L’applicazione deve essere soprattutto utilizzabile da smartphone.
+
+Preferire:
+
+* Bootstrap esistente;
+* card;
+* pulsanti chiari;
+* testi brevi;
+* feedback immediato;
+* navigazione semplice;
+* sezioni `<details>` per informazioni lunghe;
+* form che preservano i valori in caso di errore.
+
+Non introdurre React, Vue o altri framework.
+
+---
+
+# 44. Compatibilità
+
+Prima di considerare conclusa una modifica significativa verificare, quando pertinente:
+
+* homepage;
+* login/logout;
+* stato iscrizioni;
+* verifica codice;
 * conferma identità;
-* scelta mattino;
-* salvataggio mattino;
-* scelta pomeriggio;
-* salvataggio pomeriggio;
-* riepilogo;
-* modifica mattino;
-* modifica pomeriggio;
-* laboratori completi;
-* dashboard admin;
-* consultazione a iscrizioni chiuse.
+* sabato richiesto;
+* sabato non richiesto;
+* mattino;
+* pomeriggio;
+* rinunce;
+* modifica scelte;
+* laboratori pieni;
+* iscrizioni chiuse;
+* riepilogo domenica;
+* import partecipanti;
+* import laboratori;
+* admin manuale;
+* ricalcolo domenica;
+* ricalcolo A/B;
+* export;
+* comunicazioni.
+
+Non rompere un flusso esistente per completarne un altro.
 
 ---
 
-# Comunicazione durante il lavoro
+# 45. Git
 
-Essere sintetici ma precisi.
+Remote:
 
-Quando viene individuato un problema non richiesto:
+```text
+origin
+```
 
-* segnalarlo;
-* indicarne la gravità;
-* non modificarlo automaticamente salvo che sia indispensabile per completare correttamente la task.
+fork di sviluppo:
 
-Se esistono più soluzioni, privilegiare quella:
+```text
+fracfe/perMeSeiAvventura_laboratori
+```
 
-* più semplice;
-* più leggibile;
-* meno invasiva;
-* più facile da testare;
-* più coerente con il codice esistente.
+Remote upstream:
 
-Non ampliare automaticamente lo scope.
+```text
+upstream
+```
+
+repository originale:
+
+```text
+calminaro/perMeSeiAvventura_laboratori
+```
+
+Prima di ogni task:
+
+```bash
+git status
+git branch --show-current
+```
+
+Non cancellare modifiche già presenti.
+
+Non fare commit o push salvo richiesta esplicita.
 
 ---
 
-# Obiettivo finale
+# 46. Criterio di completamento di una task
 
-Il progetto deve arrivare al convegno come una piccola applicazione:
+Una task è completata quando:
 
-* semplice;
+1. il requisito richiesto funziona;
+2. le invarianti correlate sono preservate;
+3. i test pertinenti passano;
+4. MariaDB è stato verificato quando necessario;
+5. il container è stato riallineato se usato;
+6. `git diff --check` passa;
+7. non sono presenti modifiche estranee;
+8. il report finale descrive chiaramente il risultato.
+
+Non continuare a “migliorare” il codice dopo che questi criteri sono soddisfatti.
+
+---
+
+# 47. Obiettivo finale
+
+Questo progetto deve essere una piccola applicazione:
+
 * affidabile;
+* semplice;
 * comprensibile;
 * mobile-friendly;
 * sufficientemente sicura;
-* rispettosa della minimizzazione dei dati;
-* facile da verificare;
-* facile da mettere in produzione.
+* facile da amministrare;
+* facile da correggere durante l’evento.
 
-L'obiettivo non è costruire una piattaforma perfetta.
+L’obiettivo non è costruire una piattaforma perfetta.
 
-L'obiettivo è che **circa 400 partecipanti possano scegliere correttamente i propri laboratori e che gli organizzatori possano gestire il processo senza sorprese**.
+L’obiettivo è che **circa 400 partecipanti possano svolgere correttamente il proprio percorso e che gli organizzatori possano gestire iscrizioni, assegnazioni ed eccezioni senza intervenire direttamente sul database**.

@@ -1,3 +1,7 @@
+import json
+import shutil
+import subprocess
+from pathlib import Path
 import copy
 import os
 import unittest
@@ -65,13 +69,95 @@ class ImportLaboratoriTestCase(unittest.TestCase):
         db.session.commit()
         return mattino.id, pomeriggio.id
 
+
+    def test_dettaglio_soli_campi_realmente_cambiati(self):
+        self.importa()
+        dati = payload()
+        dati["lab_mattino"][0].update(titolo="Nuovo", posti=12)
+        risposta = self.importa(dati).json
+        self.assertEqual([risposta[k] for k in ("inseriti", "aggiornati", "invariati", "totale")], [0, 1, 1, 2])
+        self.assertEqual(risposta["dettaglio"], ["mattino / L01 – Nuovo: modificati Titolo, Posti"])
+        pagina = self.client.get("/import_laboratori").get_data(as_text=True)
+        self.assertIn("<details", pagina)
+        self.assertNotIn("<details open", pagina)
+
+
+    def test_preview_senza_scritture_conteggi_dettaglio_e_timestamp(self):
+        self.prepara_iscrizioni()
+        dati = payload()
+        dati["lab_mattino"][0]["titolo"] = "Cambiato"
+        dati["lab_mattino"].append({"id": "NEW", "titolo": "Nuovo", "descrizione": "Nuovo", "posti": 5})
+        prima = self.snapshot()
+        with patch.object(db.session, "commit", side_effect=AssertionError("preview scrive")), \
+             patch.object(db.session, "add", side_effect=AssertionError("preview inserisce")):
+            risposta = self.client.post("/import_laboratori/valida", json=dati)
+        self.assertEqual(risposta.status_code, 200)
+        self.assertEqual([risposta.json[k] for k in ("inseriti", "aggiornati", "invariati", "totale")], [1, 1, 1, 3])
+        self.assertEqual(risposta.json["dettaglio"],
+                         ["mattino / L01 – Cambiato: modificati Titolo", "mattino / NEW – Nuovo: nuovo"])
+        self.assertEqual(self.snapshot(), prima)
+        lab = Laboratorio.query.filter_by(tipologia="pomeriggio").one()
+        lab.descrizione = "Modifica successiva"
+        db.session.commit()
+        conferma = self.importa(dati)
+        self.assertEqual(conferma.status_code, 200)
+        self.assertEqual(conferma.json["aggiornati"], 2)
+        self.assertIn("pomeriggio / L01 – Titolo pomeriggio: modificati Descrizione", conferma.json["dettaglio"])
+        self.assertEqual(self.snapshot()["iscrizioni"], prima["iscrizioni"])
+
+    def test_conferma_rifiuta_capienza_cambiata_dopo_preview_atomicamente(self):
+        mattino, _ = self.prepara_iscrizioni()
+        dati = payload()
+        dati["lab_mattino"][0]["posti"] = 2
+        dati["lab_mattino"].insert(0, {"id": "NEW", "titolo": "Nuovo", "descrizione": "Nuovo", "posti": 5})
+        self.assertEqual(self.client.post("/import_laboratori/valida", json=dati).status_code, 200)
+        db.session.add(Partecipante(id=404, nome="Nuovo", cognome="Iscritto"))
+        db.session.flush()
+        db.session.add(Iscrizione(partecipante=404, scelta_mattino=mattino, data=datetime(2026, 9, 6)))
+        db.session.commit()
+        prima = self.snapshot()
+        risposta = self.importa(dati)
+        self.assertEqual(risposta.status_code, 409)
+        self.assertIn("3 iscritti", risposta.json["errore"])
+        self.assertEqual(self.snapshot(), prima)
+        self.assertEqual(self.client.post("/import_laboratori/valida", json=dati).status_code, 409)
+        self.assertEqual(self.snapshot(), prima)
+
+    def test_ui_preview_esplicita_e_route_protetta(self):
+        pagina = self.client.get("/import_laboratori").get_data(as_text=True)
+        for testo in ("Anteprima import — nessuna modifica è stata ancora applicata", "Conferma import", "<details", "/import_laboratori/valida"):
+            self.assertIn(testo, pagina)
+        self.client.get("/logout")
+        self.assertNotEqual(self.client.post("/import_laboratori/valida", json=payload()).status_code, 200)
+
+    @unittest.skipUnless(shutil.which("node") and os.environ.get("SHEETJS_TEST_PATH"),
+                         "richiede Node e SheetJS")
+    def test_browser_excel_confronta_prima_di_confermare(self):
+        html = self.client.get("/import_laboratori").get_data(as_text=True)
+        result = subprocess.run([shutil.which("node"), str(Path(__file__).with_name("lab_browser_runner.js"))],
+                                input=json.dumps(html), text=True, capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        dati = json.loads(result.stdout)
+        self.assertEqual(dati["preview"]["calls"], ["/import_laboratori/valida"])
+        self.assertTrue(dati["preview"]["pronta"])
+        self.assertEqual(dati["preview"]["ultimoImport"], "mai")
+        self.assertIn("1 nuovi, 1 modificati, 0 invariati, 2", dati["preview"]["riepilogo"])
+        self.assertEqual(len(dati["preview"]["dettaglio"]), 2)
+        self.assertEqual(dati["cambio"], ["/import_laboratori/valida"] * 2)
+        self.assertEqual(dati["finale"]["calls"], ["/import_laboratori/valida"] * 2 + ["/import_laboratori"])
+        self.assertFalse(dati["finale"]["pronta"])
+        self.assertIn("Import completato", dati["finale"]["riepilogo"])
+        self.assertEqual(dati["finale"]["ultimoImport"], "06/09/2026 18:00")
+
     def test_primo_import_e_secondo_senza_duplicazione(self):
         risposta = self.importa()
         self.assertEqual(risposta.status_code, 200)
-        self.assertEqual(risposta.get_json(), {"ok": True, "inseriti": 2, "aggiornati": 0, "totale": 2})
+        self.assertEqual([risposta.json[k] for k in ("inseriti", "aggiornati", "invariati", "totale")], [2, 0, 0, 2])
+        self.assertEqual(len(risposta.json["dettaglio"]), 2)
         prima = self.snapshot()["laboratori"]
         risposta = self.importa()
-        self.assertEqual(risposta.get_json(), {"ok": True, "inseriti": 0, "aggiornati": 2, "totale": 2})
+        self.assertEqual([risposta.json[k] for k in ("inseriti", "aggiornati", "invariati", "totale")], [0, 0, 2, 2])
+        self.assertEqual(risposta.json["dettaglio"], [])
         self.assertEqual(self.snapshot()["laboratori"], prima)
 
     def test_aggiorna_campi_preservando_pk_iscrizioni_e_partecipanti(self):
@@ -120,7 +206,7 @@ class ImportLaboratoriTestCase(unittest.TestCase):
         dati = payload()
         dati["lab_mattino"][0]["id"] = "NUOVO"
         risposta = self.importa(dati)
-        self.assertEqual(risposta.get_json(), {"ok": True, "inseriti": 1, "aggiornati": 1, "totale": 2})
+        self.assertEqual([risposta.json[k] for k in ("inseriti", "aggiornati", "invariati", "totale")], [1, 0, 1, 2])
         dopo = self.snapshot()
         for riga in prima["laboratori"]:
             self.assertIn(riga, dopo["laboratori"])

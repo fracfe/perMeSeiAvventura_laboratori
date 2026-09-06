@@ -138,7 +138,7 @@ class ExportIscrizioniTestCase(unittest.TestCase):
         self.assertTrue(risposta.data.startswith(b"PK"))
         self.assertRegex(
             risposta.headers["Content-Disposition"],
-            r'attachment; filename=iscrizioni_per_me_sei_avventura_\d{4}-\d{2}-\d{2}\.xlsx',
+            r'attachment; filename=iscrizioni_generali_\d{4}-\d{2}-\d{2}\.xlsx',
         )
         self.assertEqual(len(self.leggi_righe(risposta)), 1)
 
@@ -201,18 +201,18 @@ class ExportIscrizioniTestCase(unittest.TestCase):
         righe_per_codice = {riga[0]: riga for riga in righe[1:]}
         self.assertEqual(
             righe_per_codice[101],
-            (101, "Mario", "Rossi", None, None, None, None, "M01 - Bosco", None, "P01 - Sentieri", None),
+            (101, "Mario", "Rossi", None, None, None, None, "M01 - Bosco", "Non assegnato", "P01 - Sentieri", "Non assegnato"),
         )
         self.assertEqual(
             righe_per_codice[202],
-            (202, "Anna", "Bianchi", None, None, None, None, "M01 - Bosco", None, "Non iscritto", None),
+            (202, "Anna", "Bianchi", None, None, None, None, "M01 - Bosco", "Non assegnato", "Non iscritto", "Non iscritto"),
         )
         self.assertEqual(
             righe_per_codice[303],
-            (303, "Luca", "Verdi", None, None, None, None, "Non iscritto", None, "P01 - Sentieri", None),
+            (303, "Luca", "Verdi", None, None, None, None, "Non iscritto", "Non iscritto", "P01 - Sentieri", "Non assegnato"),
         )
-        self.assertEqual(righe_per_codice[404][7:], ("Non iscritto", None, "Non iscritto", None))
-        self.assertEqual(righe_per_codice[505][7:], ("Non iscritto", None, "Non iscritto", None))
+        self.assertEqual(righe_per_codice[404][7:], ("Non iscritto", "Non iscritto", "Non iscritto", "Non iscritto"))
+        self.assertEqual(righe_per_codice[505][7:], ("Non iscritto", "Non iscritto", "Non iscritto", "Non iscritto"))
 
     def test_export_per_laboratorio_crea_un_foglio_per_ogni_laboratorio(self):
         self.crea_dati()
@@ -229,7 +229,7 @@ class ExportIscrizioniTestCase(unittest.TestCase):
         self.assertTrue(risposta.data.startswith(b"PK"))
         self.assertRegex(
             risposta.headers["Content-Disposition"],
-            r'attachment; filename=iscrizioni_per_laboratorio_per_me_sei_avventura_\d{4}-\d{2}-\d{2}\.xlsx',
+            r'attachment; filename=iscrizioni_per_laboratorio_\d{4}-\d{2}-\d{2}\.xlsx',
         )
         self.assertEqual(
             set(workbook.sheetnames),
@@ -258,11 +258,11 @@ class ExportIscrizioniTestCase(unittest.TestCase):
         self.assertEqual(righe_senza_iscritti, [intestazioni])
         self.assertEqual(
             righe_mattino[1:],
-            [(202, "Anna", "Bianchi", None), (101, "Mario", "Rossi", None)],
+            [(202, "Anna", "Bianchi", "Non assegnato"), (101, "Mario", "Rossi", "Non assegnato")],
         )
         self.assertEqual(
             righe_pomeriggio[1:],
-            [(101, "Mario", "Rossi", None), (303, "Luca", "Verdi", None)],
+            [(101, "Mario", "Rossi", "Non assegnato"), (303, "Luca", "Verdi", "Non assegnato")],
         )
         self.assertEqual(
             list(workbook["M - Non partecipa"].iter_rows(values_only=True)),
@@ -357,11 +357,11 @@ class ExportIscrizioniTestCase(unittest.TestCase):
         righe_per_codice = {riga[0]: riga for riga in elenco[1:]}
         self.assertEqual(
             righe_per_codice[606],
-            (606, "Nessun", "Laboratorio", None, None, None, None, "Non partecipa", None, "Non partecipa", None),
+            (606, "Nessun", "Laboratorio", None, None, None, None, "Non partecipa", "Non partecipa", "Non partecipa", "Non partecipa"),
         )
         self.assertEqual(
             righe_per_codice[707],
-            (707, "Scelta", "Mista", None, None, None, None, "M01 - Bosco", None, "Non partecipa", None),
+            (707, "Scelta", "Mista", None, None, None, None, "M01 - Bosco", "Non assegnato", "Non partecipa", "Non partecipa"),
         )
 
         workbook = self.leggi_workbook(
@@ -411,16 +411,16 @@ class ExportIscrizioniTestCase(unittest.TestCase):
                 per_codice = {r[0]: r for r in righe}
                 self.assertEqual(set(per_codice), {101, 202, 303, 404, 505})
                 self.assertEqual(per_codice[101][3:], ("Roma 1", "Roma", "Lazio", "mario@example.test", "M01 - Bosco", "B", "P01 - Sentieri", "A"))
-                self.assertEqual(per_codice[202][7:], ("Iscrizione non richiesta", None, "Iscrizione non richiesta", None))
-                self.assertEqual(per_codice[303][7:], ("Non partecipa", None, "P01 - Sentieri", None))
+                self.assertEqual(per_codice[202][7:], ("Iscrizione non richiesta", "Iscrizione non richiesta", "Iscrizione non richiesta", "Iscrizione non richiesta"))
+                self.assertEqual(per_codice[303][7:], ("Non partecipa", "Non partecipa", "P01 - Sentieri", "Non assegnato"))
                 for codice in (404, 505):
-                    self.assertEqual(per_codice[codice][7:], ("Non iscritto", None, "Non iscritto", None))
+                    self.assertEqual(per_codice[codice][7:], ("Non iscritto", "Non iscritto", "Non iscritto", "Non iscritto"))
                 if modalita == "laboratori":
                     self.assertEqual(workbook.sheetnames[0], "Tutti i partecipanti")
                     mattino = list(workbook["M - M01 - Bosco"].iter_rows(min_row=2, values_only=True))
                     self.assertEqual(mattino, [(202, "Anna", "Bianchi", "A"), (101, "Mario", "Rossi", "B")])
                     self.assertEqual(list(workbook["P - P01 - Sentieri"].iter_rows(min_row=2, values_only=True)),
-                                     [(101, "Mario", "Rossi", "A"), (303, "Luca", "Verdi", None)])
+                                     [(101, "Mario", "Rossi", "A"), (303, "Luca", "Verdi", "Non assegnato")])
                     self.assertEqual(list(workbook["P - Non partecipa"].iter_rows(min_row=2, values_only=True)), [])
                     self.assertEqual(list(workbook["M - Non partecipa"].iter_rows(min_row=2, values_only=True)), [(303, "Luca", "Verdi")])
                 self.assertEqual(stato(), prima)
@@ -437,8 +437,8 @@ class ExportIscrizioniTestCase(unittest.TestCase):
                 righe = list(workbook[nome_foglio].iter_rows(min_row=2, values_only=True))
                 self.assertEqual(len(righe), 2 if con_partecipanti else 0)
                 if con_partecipanti:
-                    self.assertEqual(righe[0][7:], ("Non iscritto", None, "Non iscritto", None))
-                    self.assertEqual(righe[1][7:], ("Iscrizione non richiesta", None, "Iscrizione non richiesta", None))
+                    self.assertEqual(righe[0][7:], ("Non iscritto", "Non iscritto", "Non iscritto", "Non iscritto"))
+                    self.assertEqual(righe[1][7:], ("Iscrizione non richiesta", "Iscrizione non richiesta", "Iscrizione non richiesta", "Iscrizione non richiesta"))
             self.assertEqual(Iscrizione.query.count(), 0)
 
     def test_export_e_disponibile_dalla_navigazione_iscrizioni(self):

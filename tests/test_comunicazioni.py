@@ -80,10 +80,10 @@ class ComunicazioniTestCase(unittest.TestCase):
         self.assertEqual([r[0] for r in righe[1:]], [1, 2, 3, 4, 5])
         per_codice = {r[0]: r for r in righe[1:]}
         self.assertEqual(per_codice[1], (1, "Mario", "Rossi", "persona1@example.test", "M01 - Bosco", "B", "P01 - Sentieri", "A", "Avventura"))
-        self.assertEqual(per_codice[2][4:], ("Non partecipa", None, "P01 - Sentieri", None, "Gradualità"))
-        self.assertEqual(per_codice[3][4:], ("M01 - Bosco", None, "Non partecipa", None, "Vivere"))
-        self.assertEqual(per_codice[4][4:], ("Non iscritto", None, "Non iscritto", None, "Non assegnato"))
-        self.assertEqual(per_codice[5][4:], ("Iscrizione non richiesta", None, "Iscrizione non richiesta", None, "Iscrizione non richiesta"))
+        self.assertEqual(per_codice[2][4:], ("Non partecipa", "Non partecipa", "P01 - Sentieri", "Non assegnato", "Gradualità"))
+        self.assertEqual(per_codice[3][4:], ("M01 - Bosco", "Non assegnato", "Non partecipa", "Non partecipa", "Vivere"))
+        self.assertEqual(per_codice[4][4:], ("Non iscritto", "Non iscritto", "Non iscritto", "Non iscritto", "Non assegnato"))
+        self.assertEqual(per_codice[5][4:], ("Iscrizione non richiesta", "Iscrizione non richiesta", "Iscrizione non richiesta", "Iscrizione non richiesta", "Iscrizione non richiesta"))
         for i in range(1, 6):
             self.assertEqual(per_codice[i][3], f"persona{i}@example.test")
 
@@ -115,8 +115,8 @@ class ComunicazioniTestCase(unittest.TestCase):
         ])
         db.session.commit()
         righe = self.scarica()
-        self.assertEqual(righe[1], (1, "Anna", "Rossi", None, "Non iscritto", None, "Non iscritto", None, "Iscrizione non richiesta"))
-        self.assertEqual(righe[2][4:], ("Iscrizione non richiesta", None, "Iscrizione non richiesta", None, "Non assegnato"))
+        self.assertEqual(righe[1], (1, "Anna", "Rossi", None, "Non iscritto", "Non iscritto", "Non iscritto", "Non iscritto", "Iscrizione non richiesta"))
+        self.assertEqual(righe[2][4:], ("Iscrizione non richiesta", "Iscrizione non richiesta", "Iscrizione non richiesta", "Iscrizione non richiesta", "Non assegnato"))
         self.assertEqual(Iscrizione.query.count(), 0)
 
     def test_ordinamento_cognome_nome_codice_deterministico(self):
