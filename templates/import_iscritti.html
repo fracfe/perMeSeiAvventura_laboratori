@@ -1,266 +1,40 @@
 {% extends "admin.html" %}
 
 {% block corpo %}
-
-<div class="m-5" x-data="excelUploader()">
-
-    <p><strong>Ultimo import:</strong> {{ ultimo_import }}</p>
-
-    <input
-        class="form-control"
-        type="file"
-        accept=".xlsx,.xls"
-        @change="loadFile($event)"
-    >
-
-    <div class="alert alert-danger mt-3" x-show="errori.length > 0" role="alert">
-        <strong>Il file non può essere importato.</strong>
-        <ul class="mb-0 mt-2">
-            <template x-for="errore in errori" :key="errore">
-                <li x-text="errore"></li>
-            </template>
-        </ul>
-        <p
-            class="mb-0 mt-2"
-            x-show="righeNonValide > errori.length"
-            x-text="`Sono presenti altri ${righeNonValide - errori.length} errori.`"
-        ></p>
+<script src="{{ url_for('static', filename='import_iscritti.js') }}"></script>
+<div class="m-3 m-md-5" x-data='csvUploader({{ colonne_csv | tojson }})'>
+    <h1 class="h3">Importa partecipanti da CSV</h1>
+    <p><strong>Ultimo import:</strong> <span x-text='ultimoImport || {{ ultimo_import | tojson }}'>{{ ultimo_import }}</span></p>
+    <p>Seleziona un CSV UTF-8 separato da punto e virgola (;), con le intestazioni nella prima riga.
+        Verifica l’anteprima e premi “Importa partecipanti”.</p>
+    <p>I codici esistenti vengono aggiornati; le persone assenti dal file restano invariate.
+        Iscrizioni e assegnazioni dei gruppi vengono conservate.</p>
+    <label for="csv-partecipanti" class="form-label">File iscritti (.csv)</label>
+    <input id="csv-partecipanti" class="form-control" type="file" accept=".csv"
+        @change="loadFile($event)" :disabled="analisi || caricamento">
+    <p class="mt-3" x-show="analisi" role="status">Lettura e validazione in corso…</p>
+    <div class="alert alert-danger mt-3" x-show="errore" x-text="errore" role="alert"></div>
+    <div class="alert alert-success mt-3" x-show="riepilogo" x-text="riepilogo" role="status"></div>
+    <div x-show="rows.length > 0">
+        <p class="mt-3">Anteprima validata: <strong x-text="rows.length"></strong> partecipanti.
+            Nessuna modifica è stata ancora salvata.</p>
+        <button class="btn btn-success mb-3" @click="upload()" :disabled="!puoCaricare"
+            x-text="caricamento ? 'Import in corso…' : 'Importa partecipanti'"></button>
+        <div class="table-responsive">
+            <table class="table">
+                <thead><tr>
+                    <th scope="col">Codice</th><th scope="col">Nome</th><th scope="col">Cognome</th>
+                    <th scope="col">Gruppo</th><th scope="col">Zona</th><th scope="col">Regione</th>
+                    <th scope="col">Email</th><th scope="col">Sabato</th><th scope="col">Domenica</th>
+                </tr></thead>
+                <tbody><template x-for="row in rows" :key="row.id"><tr>
+                    <td x-text="row.id"></td><td x-text="row.nome"></td><td x-text="row.cognome"></td>
+                    <td x-text="row.gruppo"></td><td x-text="row.zona"></td><td x-text="row.regione"></td>
+                    <td x-text="row.email"></td><td x-text="row.deve_iscriversi_sabato ? 'Sì' : 'No'"></td>
+                    <td x-text="row.includi_domenica ? 'Sì' : 'No'"></td>
+                </tr></template></tbody>
+            </table>
+        </div>
     </div>
-
-    <div class="alert alert-success mt-3" x-show="fileAnalizzato && puoCaricare" role="status">
-        File valido: <strong x-text="rows.length"></strong> partecipanti pronti per l'import.
-    </div>
-
-    <div class="alert alert-warning mt-3" x-show="fileAnalizzato && righeNonValide > 0" role="status">
-        Righe valide: <strong x-text="rows.length"></strong>.
-        Righe non valide: <strong x-text="righeNonValide"></strong>.
-    </div>
-
-    <div class="alert alert-danger mt-3" x-show="erroreUpload" x-text="erroreUpload" role="alert"></div>
-
-    <div class="d-flex justify-content-center">
-        <button
-            class="btn my-2 btn-success"
-            @click="upload()"
-            :disabled="!puoCaricare || caricamento"
-            x-text="caricamento ? 'Caricamento in corso…' : 'Carica i dati'"
-        >
-        </button>
-    </div>
-
-    <table class="table" x-show="rows.length > 0">
-    <thead>
-        <tr>
-        <th scope="col">Codice Socio</th>
-        <th scope="col">Nome</th>
-        <th scope="col">Cognome</th>
-        </tr>
-    </thead>
-    <tbody>
-        <template x-for="row in rows" :key="row.id">
-            <tr>
-                <td x-text="row.id"></td>
-                <td x-text="row.nome"></td>
-                <td x-text="row.cognome"></td>
-            </tr>
-        </template>
-    </tbody>
-    </table>
-
 </div>
-
-<script>
-function excelUploader() {
-    return {
-        rows: [],
-        errori: [],
-        righeNonValide: 0,
-        fileAnalizzato: false,
-        erroreUpload: '',
-        caricamento: false,
-
-        get puoCaricare() {
-            return this.rows.length > 0
-                && this.righeNonValide === 0
-                && this.errori.length === 0;
-        },
-
-        aggiungiErrore(messaggio) {
-            if (this.errori.length < 10) {
-                this.errori.push(messaggio);
-            }
-        },
-
-        async loadFile(event) {
-            this.rows = [];
-            this.errori = [];
-            this.righeNonValide = 0;
-            this.fileAnalizzato = false;
-            this.erroreUpload = '';
-
-            const file = event.target.files[0];
-
-            if (!file) {
-                this.aggiungiErrore('Seleziona un file Excel da importare.');
-                return;
-            }
-
-            try {
-                const data = await file.arrayBuffer();
-                const workbook = XLSX.read(data, { type: 'array' });
-                const nomeFoglio = 'EventLeadsOfAge';
-                const numeroRigaIntestazioni = 6;
-                const indiceRigaIntestazioni = numeroRigaIntestazioni - 1;
-                const foglio = workbook.Sheets[nomeFoglio];
-
-                if (!foglio) {
-                    this.aggiungiErrore('Il file non contiene il foglio "EventLeadsOfAge".');
-                    this.fileAnalizzato = true;
-                    return;
-                }
-
-                const righe = XLSX.utils.sheet_to_json(foglio, {
-                    header: 1,
-                    defval: null,
-                    blankrows: true,
-                    range: 0
-                });
-                const rigaIntestazioni = righe[indiceRigaIntestazioni] || [];
-                const intestazioni = rigaIntestazioni.map(
-                    valore => String(valore ?? '').trim()
-                );
-                const colonneRichieste = ['Codice', 'Nome', 'Cognome'];
-                const colonneMancanti = colonneRichieste.filter(
-                    colonna => !intestazioni.includes(colonna)
-                );
-                if (colonneMancanti.length > 0) {
-                    this.aggiungiErrore(
-                        `Alla riga ${numeroRigaIntestazioni} del foglio "EventLeadsOfAge" `
-                        + `mancano le colonne: ${colonneMancanti.join(', ')}.`
-                    );
-                    this.fileAnalizzato = true;
-                    return;
-                }
-
-                const indiceCodice = intestazioni.indexOf('Codice');
-                const indiceCognome = intestazioni.indexOf('Cognome');
-                const indiceNome = intestazioni.indexOf('Nome');
-                const codiciVisti = new Set();
-
-                for (
-                    let indice = indiceRigaIntestazioni + 1;
-                    indice < righe.length;
-                    indice += 1
-                ) {
-                    const riga = righe[indice] || [];
-                    const valoriPartecipante = [
-                        riga[indiceCodice],
-                        riga[indiceNome],
-                        riga[indiceCognome]
-                    ];
-                    const rigaSenzaDatiPartecipante = valoriPartecipante.every(
-                        valore => valore === null
-                            || valore === undefined
-                            || String(valore).trim() === ''
-                    );
-                    if (rigaSenzaDatiPartecipante) {
-                        continue;
-                    }
-
-                    const erroriRiga = [];
-                    const codice = Number(riga[indiceCodice]);
-                    const cognome = riga[indiceCognome];
-                    const nome = riga[indiceNome];
-
-                    if (!Number.isSafeInteger(codice) || codice <= 0 || codice > 2147483647) {
-                        erroriRiga.push('codice censimento non valido');
-                    } else if (codiciVisti.has(codice)) {
-                        erroriRiga.push('codice censimento duplicato');
-                    } else {
-                        codiciVisti.add(codice);
-                    }
-                    if (typeof cognome !== 'string' || !cognome.trim()) {
-                        erroriRiga.push('cognome mancante');
-                    } else if (cognome.trim().length > 255) {
-                        erroriRiga.push('cognome oltre 255 caratteri');
-                    }
-                    if (typeof nome !== 'string' || !nome.trim()) {
-                        erroriRiga.push('nome mancante');
-                    } else if (nome.trim().length > 255) {
-                        erroriRiga.push('nome oltre 255 caratteri');
-                    }
-
-                    if (erroriRiga.length > 0) {
-                        this.righeNonValide += 1;
-                        this.aggiungiErrore(
-                            `Riga Excel ${indice + 1}: ${erroriRiga.join(', ')}.`
-                        );
-                    } else {
-                        this.rows.push({
-                            id: codice,
-                            nome: nome.trim(),
-                            cognome: cognome.trim()
-                        });
-                    }
-                }
-
-                if (this.rows.length === 0 && this.righeNonValide === 0) {
-                    this.aggiungiErrore('Il file non contiene partecipanti da importare.');
-                }
-                this.fileAnalizzato = true;
-            } catch (err) {
-                this.rows = [];
-                this.aggiungiErrore('Il file Excel non può essere letto.');
-                this.fileAnalizzato = true;
-            } finally {
-                event.target.value = '';
-            }
-        },
-
-        async upload() {
-            if (!this.puoCaricare || this.caricamento) {
-                return;
-            }
-
-            this.caricamento = true;
-            this.erroreUpload = '';
-            try {
-                const payload = this.rows.map(row => ({
-                    id: row.id,
-                    nome: row.nome,
-                    cognome: row.cognome
-                }));
-                const response = await fetch('/import_iscritti', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(payload)
-                });
-
-                let data = {};
-                try {
-                    data = await response.json();
-                } catch (err) {
-                    data = {};
-                }
-                if (response.redirected) {
-                    throw new Error('Sessione scaduta. Accedi nuovamente all\'area amministrativa.');
-                }
-                if (!response.ok || data.ok !== true) {
-                    throw new Error(data.errore || 'Errore durante l\'upload.');
-                }
-
-                alert('Upload completato');
-                window.location.reload();
-            } catch (err) {
-                this.erroreUpload = err.message || 'Errore durante l\'upload.';
-            } finally {
-                this.caricamento = false;
-            }
-        }
-    }
-}
-</script>
-
 {% endblock %}

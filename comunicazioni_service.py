@@ -7,6 +7,7 @@ import zipfile
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 from werkzeug.utils import secure_filename
+from suddivisione_gruppi_service import NOMI_GRUPPI_DOMENICA
 
 
 MAX_FILE_COMUNICAZIONI = 10 * 1024 * 1024
@@ -31,9 +32,11 @@ COLONNE_OUTPUT_COMUNICAZIONI = (
     "Nome",
     "Cognome",
     "Email",
-    "Sabato mattina",
+    "Sabato mattino",
+    "Gruppo A/B mattino",
     "Sabato pomeriggio",
-    "Domenica mattina",
+    "Gruppo A/B pomeriggio",
+    "Domenica",
 )
 
 
@@ -219,6 +222,14 @@ def unisci_dati_comunicazioni(partecipanti_database, assegnazioni_domenica):
     return righe, anomalie
 
 
+def descrivi_domenica_comunicazione(partecipante):
+    if not partecipante.includi_domenica:
+        return "Iscrizione non richiesta"
+    if partecipante.gruppo_domenica is None:
+        return "Non assegnato"
+    return NOMI_GRUPPI_DOMENICA[partecipante.gruppo_domenica]
+
+
 def crea_workbook_comunicazioni(righe):
     workbook = Workbook()
     foglio = workbook.active
@@ -232,7 +243,9 @@ def crea_workbook_comunicazioni(righe):
                 riga["cognome"],
                 riga["email"],
                 riga["sabato_mattina"],
+                riga["sottogruppo_mattino"],
                 riga["sabato_pomeriggio"],
+                riga["sottogruppo_pomeriggio"],
                 riga["domenica_mattina"],
             ]
         )
@@ -241,6 +254,6 @@ def crea_workbook_comunicazioni(righe):
         cella.fill = PatternFill("solid", fgColor="0D6EFD")
     foglio.freeze_panes = "A2"
     foglio.auto_filter.ref = foglio.dimensions
-    for indice, larghezza in enumerate((20, 24, 24, 34, 38, 38, 20), start=1):
+    for indice, larghezza in enumerate((20, 24, 24, 34, 38, 22, 38, 24, 28), start=1):
         foglio.column_dimensions[foglio.cell(1, indice).column_letter].width = larghezza
     return workbook

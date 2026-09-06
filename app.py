@@ -1,6 +1,6 @@
 from functools import wraps
 
-from flask import Flask, render_template, redirect, request, url_for, flash, send_file, session
+from flask import Flask, render_template, redirect, request, url_for, flash, send_file, session, abort
 from flask_login import UserMixin, login_user, LoginManager, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.exceptions import HTTPException
@@ -14,6 +14,10 @@ from openpyxl import Workbook
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from suddivisione_gruppi_service import (
+    NOMI_GRUPPI_DOMENICA,
+    NUMERO_GRUPPI_DOMENICA,
+    calcola_gruppi_domenica,
+    calcola_sottogruppi_ab,
     ErroreSuddivisione,
     carica_excel_suddivisione,
     distribuzione_dimensioni,
@@ -21,13 +25,8 @@ from suddivisione_gruppi_service import (
     genera_excel_suddivisione,
     valida_numero_gruppi,
 )
-from comunicazioni_service import (
-    ErroreComunicazioni,
-    carica_excel_comunicazioni,
-    crea_workbook_comunicazioni,
-    estrai_assegnazioni_domenica,
-    unisci_dati_comunicazioni,
-)
+from comunicazioni_service import crea_workbook_comunicazioni, descrivi_domenica_comunicazione
+
 import json
 import io
 import os
@@ -110,6 +109,14 @@ class Iscrizione(db.Model):
             "scelta_pomeriggio IS NULL OR non_partecipa_pomeriggio = 0",
             name="ck_iscrizioni_scelta_pomeriggio_esclusiva",
         ),
+        db.CheckConstraint(
+            "sottogruppo_mattino IS NULL OR sottogruppo_mattino IN ('A', 'B')",
+            name="ck_iscrizioni_sottogruppo_mattino",
+        ),
+        db.CheckConstraint(
+            "sottogruppo_pomeriggio IS NULL OR sottogruppo_pomeriggio IN ('A', 'B')",
+            name="ck_iscrizioni_sottogruppo_pomeriggio",
+        ),
     )
     id = db.Column(db.Integer, primary_key=True)
     data = db.Column(db.DateTime, nullable=False)
@@ -118,12 +125,35 @@ class Iscrizione(db.Model):
     scelta_pomeriggio = db.Column(db.Integer, db.ForeignKey("laboratori.id", name="fk_iscrizioni_laboratori_pomeriggio_id"), nullable=True)
     non_partecipa_mattino = db.Column(db.Boolean, nullable=False, default=False)
     non_partecipa_pomeriggio = db.Column(db.Boolean, nullable=False, default=False)
+    sottogruppo_mattino = db.Column(db.String(1), nullable=True)
+    sottogruppo_pomeriggio = db.Column(db.String(1), nullable=True)
 
 class Partecipante(db.Model):
     __tablename__ = "partecipanti"
+    __table_args__ = (
+        db.CheckConstraint(
+            "gruppo_domenica IS NULL OR gruppo_domenica BETWEEN 1 AND 20",
+            name="ck_partecipanti_gruppo_domenica",
+        ),
+    )
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String(255), nullable=False)
     cognome = db.Column(db.String(255), nullable=False)
+    gruppo = db.Column(db.String(255), nullable=True)
+    zona = db.Column(db.String(255), nullable=True)
+    regione = db.Column(db.String(255), nullable=True)
+    email = db.Column(db.String(255), nullable=True)
+    sesso = db.Column(db.String(50), nullable=True)
+    foca = db.Column(db.String(255), nullable=True)
+    ruolo = db.Column(db.String(255), nullable=True)
+    incarico_altro = db.Column(db.Text, nullable=True)
+    deve_iscriversi_sabato = db.Column(
+        db.Boolean, nullable=False, default=True, server_default=db.true()
+    )
+    includi_domenica = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=db.false()
+    )
+    gruppo_domenica = db.Column(db.SmallInteger, nullable=True)
 
 class Laboratorio(db.Model):
     __tablename__ = "laboratori"
@@ -145,6 +175,7 @@ STATO_ISCRIZIONI_KEY = "stato_iscrizioni"
 MESSAGGIO_ISCRIZIONI_KEY = "messaggio_iscrizioni"
 ULTIMO_IMPORT_PARTECIPANTI_KEY = "ultimo_import_partecipanti"
 ULTIMO_IMPORT_LABORATORI_KEY = "ultimo_import_laboratori"
+ULTIMO_RICALCOLO_DOMENICA_KEY = "ultimo_ricalcolo_domenica"
 STATI_ISCRIZIONI_VALIDI = ("aperte", "chiuse")
 SCELTA_NON_PARTECIPA = "non_partecipa"
 TESTO_NON_PARTECIPA = "Non partecipa"
@@ -184,6 +215,36 @@ def get_ultimo_import(key):
         return "mai"
     return data_import.strftime("%d/%m/%Y %H:%M")
 
+COLONNE_CSV_PARTECIPANTI = {
+    "Codice": "id",
+    "Nome": "nome",
+    "Cognome": "cognome",
+    "Gruppo": "gruppo",
+    "Zona": "zona",
+    "Regione": "regione",
+    "EmailContatto": "email",
+    "Sesso": "sesso",
+    "FoCa": "foca",
+    "Partecipo in qualità di:": "ruolo",
+    'Se hai indicato "altro" specifica incarico:': "incarico_altro",
+    "Partecipa ai laboratori di sabato come partecipante": "deve_iscriversi_sabato",
+    "Partecipa ai laboratori di domenica come partecipante": "includi_domenica",
+}
+CAMPI_BOOLEANI_PARTECIPANTE = ("deve_iscriversi_sabato", "includi_domenica")
+
+
+def normalizza_flag_partecipante(valore):
+    if isinstance(valore, bool):
+        return valore
+    if isinstance(valore, str):
+        valore = valore.strip().casefold()
+        if valore in {"sì", "si", "s", "yes", "true", "1"}:
+            return True
+        if valore in {"no", "n", "false", "0"}:
+            return False
+    raise ValueError("Il flag deve contenere un valore esplicito sì/no valido.")
+
+
 def valida_import_partecipanti(dati):
     if not isinstance(dati, list):
         return None, "Il payload deve contenere una lista di partecipanti."
@@ -195,8 +256,7 @@ def valida_import_partecipanti(dati):
     for indice, riga in enumerate(dati, start=1):
         if not isinstance(riga, dict):
             return None, f"La riga {indice} non contiene un partecipante valido."
-
-        for campo in ("id", "nome", "cognome"):
+        for campo in COLONNE_CSV_PARTECIPANTI.values():
             if campo not in riga:
                 return None, f'Manca il campo "{campo}" nella riga {indice}.'
 
@@ -209,35 +269,78 @@ def valida_import_partecipanti(dati):
         ):
             return None, f"La riga {indice} contiene un codice censimento non valido."
         if partecipante_id in codici_visti:
-            return None, (
-                f"La riga {indice} contiene il codice censimento "
-                f"duplicato {partecipante_id}."
-            )
+            return None, f"La riga {indice} contiene il codice censimento duplicato {partecipante_id}."
         codici_visti.add(partecipante_id)
-
-        nome = riga["nome"]
-        if not isinstance(nome, str) or not nome.strip():
-            return None, f"Manca il nome nella riga {indice}."
-        nome = nome.strip()
-        if len(nome) > 255:
-            return None, f"Il nome nella riga {indice} supera 255 caratteri."
-
-        cognome = riga["cognome"]
-        if not isinstance(cognome, str) or not cognome.strip():
-            return None, f"Manca il cognome nella riga {indice}."
-        cognome = cognome.strip()
-        if len(cognome) > 255:
-            return None, f"Il cognome nella riga {indice} supera 255 caratteri."
-
-        partecipanti_validati.append(
-            {
-                "id": partecipante_id,
-                "nome": nome,
-                "cognome": cognome,
-            }
-        )
-
+        validata = {"id": partecipante_id}
+        for campo in COLONNE_CSV_PARTECIPANTI.values():
+            if campo == "id":
+                continue
+            valore = riga[campo]
+            if campo in CAMPI_BOOLEANI_PARTECIPANTE:
+                try:
+                    validata[campo] = normalizza_flag_partecipante(valore)
+                except ValueError:
+                    return None, f'Il flag "{campo}" nella riga {indice} deve contenere un valore esplicito sì/no valido.'
+                continue
+            obbligatorio = campo in ("nome", "cognome")
+            if valore is None and not obbligatorio:
+                validata[campo] = None
+                continue
+            if not isinstance(valore, str):
+                return None, f'Il campo "{campo}" nella riga {indice} deve essere un testo.'
+            valore = valore.strip()
+            if not valore and obbligatorio:
+                return None, f'Manca il campo "{campo}" nella riga {indice}.'
+            if campo == "incarico_altro":
+                if len(valore.encode("utf-8")) > MAX_TESTO_DATABASE:
+                    return None, f'Il campo "{campo}" nella riga {indice} è troppo lungo.'
+            else:
+                limite = 50 if campo == "sesso" else 255
+                if len(valore) > limite:
+                    return None, f'Il campo "{campo}" nella riga {indice} supera {limite} caratteri.'
+            validata[campo] = valore or None
+        partecipanti_validati.append(validata)
     return partecipanti_validati, None
+
+def valida_laboratorio(riga, riferimento="scheda del laboratorio"):
+    if not isinstance(riga, dict):
+        return None, f"La {riferimento} non è valida."
+
+    for campo in ("id", "titolo", "descrizione", "posti"):
+        if campo not in riga:
+            return None, f'Manca il campo "{campo}" nella {riferimento}.'
+
+    id_lab = riga["id"]
+    if not isinstance(id_lab, str) or not id_lab.strip():
+        return None, f"Manca il codice laboratorio nella {riferimento}."
+    id_lab = id_lab.strip()
+    if len(id_lab) > 10:
+        return None, f"Il codice laboratorio nella {riferimento} supera 10 caratteri."
+
+    titolo = riga["titolo"]
+    if not isinstance(titolo, str) or not titolo.strip():
+        return None, f"Manca il titolo nella {riferimento}."
+    titolo = titolo.strip()
+    if len(titolo) > 255:
+        return None, f"Il titolo nella {riferimento} supera 255 caratteri."
+
+    descrizione = riga["descrizione"]
+    if not isinstance(descrizione, str) or not descrizione.strip():
+        return None, f"Manca la descrizione nella {riferimento}."
+    descrizione = descrizione.strip()
+    if len(descrizione.encode("utf-8")) > MAX_TESTO_DATABASE:
+        return None, f"La descrizione nella {riferimento} è troppo lunga."
+
+    posti = riga["posti"]
+    if (
+        isinstance(posti, bool)
+        or not isinstance(posti, int)
+        or posti <= 0
+        or posti > MAX_INTEGER_DATABASE
+    ):
+        return None, f"Il laboratorio {id_lab} ha una capienza non valida."
+
+    return {"id": id_lab, "titolo": titolo, "descrizione": descrizione, "posti": posti}, None
 
 def valida_import_laboratori(dati):
     if not isinstance(dati, dict):
@@ -261,53 +364,16 @@ def valida_import_laboratori(dati):
             )
 
         righe_validate = []
+        codici_visti = set()
         for indice, riga in enumerate(righe, start=1):
             riferimento = f"riga {indice} dei laboratori del {fascia}"
-            if not isinstance(riga, dict):
-                return None, f"La {riferimento} non è valida."
-
-            for campo in ("id", "titolo", "descrizione", "posti"):
-                if campo not in riga:
-                    return None, f'Manca il campo "{campo}" nella {riferimento}.'
-
-            id_lab = riga["id"]
-            if not isinstance(id_lab, str) or not id_lab.strip():
-                return None, f"Manca il codice laboratorio nella {riferimento}."
-            id_lab = id_lab.strip()
-            if len(id_lab) > 10:
-                return None, f"Il codice laboratorio nella {riferimento} supera 10 caratteri."
-
-            titolo = riga["titolo"]
-            if not isinstance(titolo, str) or not titolo.strip():
-                return None, f"Manca il titolo nella {riferimento}."
-            titolo = titolo.strip()
-            if len(titolo) > 255:
-                return None, f"Il titolo nella {riferimento} supera 255 caratteri."
-
-            descrizione = riga["descrizione"]
-            if not isinstance(descrizione, str) or not descrizione.strip():
-                return None, f"Manca la descrizione nella {riferimento}."
-            descrizione = descrizione.strip()
-            if len(descrizione.encode("utf-8")) > MAX_TESTO_DATABASE:
-                return None, f"La descrizione nella {riferimento} è troppo lunga."
-
-            posti = riga["posti"]
-            if (
-                isinstance(posti, bool)
-                or not isinstance(posti, int)
-                or posti <= 0
-                or posti > MAX_INTEGER_DATABASE
-            ):
-                return None, f"Il laboratorio {id_lab} ha una capienza non valida."
-
-            righe_validate.append(
-                {
-                    "id": id_lab,
-                    "titolo": titolo,
-                    "descrizione": descrizione,
-                    "posti": posti,
-                }
-            )
+            validata, errore = valida_laboratorio(riga, riferimento)
+            if errore:
+                return None, errore
+            if validata["id"] in codici_visti:
+                return None, f"Codice laboratorio duplicato {validata['id']} nel foglio {fascia}."
+            codici_visti.add(validata["id"])
+            righe_validate.append(validata)
 
         laboratori_validati[chiave] = righe_validate
 
@@ -346,7 +412,9 @@ def scelta_fascia_effettuata(iscrizione, tipologia):
         )
     )
 
-def stato_iscrizione(iscrizione):
+def stato_iscrizione(iscrizione, partecipante=None):
+    if partecipante is not None and not partecipante.deve_iscriversi_sabato:
+        return "non_richiesta"
     if iscrizione_completa(iscrizione):
         return "completo"
     if scelta_fascia_effettuata(iscrizione, "mattino") != scelta_fascia_effettuata(
@@ -450,6 +518,8 @@ def conferma_identita():
     if partecipante is None:
         return redirect(url_for("index"))
     session["identita_confermata"] = True
+    if not partecipante.deve_iscriversi_sabato:
+        return redirect(url_for("riepilogo_iscrizione"))
     return redirect(url_for("percorso_iscrizione"))
 
 @app.route("/iscrizione")
@@ -457,6 +527,8 @@ def percorso_iscrizione():
     partecipante = get_partecipante_corrente()
     if partecipante is None:
         return redirect(url_for("index"))
+    if not partecipante.deve_iscriversi_sabato:
+        return redirect(url_for("riepilogo_iscrizione"))
 
     iscrizione = get_iscrizione_partecipante(partecipante.id)
     if get_stato_iscrizioni() == "chiuse":
@@ -479,6 +551,9 @@ def scelta_laboratorio(tipologia):
     partecipante = get_partecipante_corrente()
     if partecipante is None:
         return redirect(url_for("index"))
+    if not partecipante.deve_iscriversi_sabato:
+        flash("Iscrizione ai laboratori del sabato: non richiesta", "info")
+        return redirect(url_for("riepilogo_iscrizione"))
     if get_stato_iscrizioni() != "aperte":
         return redirect(url_for("riepilogo_iscrizione"))
 
@@ -521,6 +596,8 @@ def lista_laboratori(tipologia):
     partecipante = get_partecipante_corrente()
     if partecipante is None:
         return {"ok": False, "errore": "Sessione scaduta."}, 401
+    if not partecipante.deve_iscriversi_sabato:
+        return {"ok": False, "errore": "Iscrizione ai laboratori del sabato: non richiesta"}, 403
     if get_stato_iscrizioni() != "aperte":
         return {"ok": False, "errore": "Le iscrizioni sono chiuse."}, 403
 
@@ -582,6 +659,8 @@ def salva_laboratorio(tipologia):
     partecipante_sessione = get_partecipante_corrente()
     if partecipante_sessione is None:
         return {"ok": False, "errore": "Sessione scaduta."}, 401
+    if not partecipante_sessione.deve_iscriversi_sabato:
+        return {"ok": False, "errore": "Iscrizione ai laboratori del sabato: non richiesta"}, 403
 
     dati = request.get_json(silent=True)
     if not dati:
@@ -604,10 +683,14 @@ def salva_laboratorio(tipologia):
             db.select(Partecipante)
             .where(Partecipante.id == partecipante_sessione.id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         ).scalar_one_or_none()
         if partecipante is None:
             db.session.rollback()
             return {"ok": False, "errore": "Partecipante non valido."}, 400
+        if not partecipante.deve_iscriversi_sabato:
+            db.session.rollback()
+            return {"ok": False, "errore": "Iscrizione ai laboratori del sabato: non richiesta"}, 403
 
         iscrizione = get_iscrizione_partecipante(partecipante.id)
         if tipologia == "pomeriggio" and (
@@ -713,7 +796,8 @@ def riepilogo_iscrizione():
         return redirect(url_for("index"))
 
     iscrizione = get_iscrizione_partecipante(partecipante.id)
-    if get_stato_iscrizioni() == "aperte" and not iscrizione_completa(iscrizione):
+    if (partecipante.deve_iscriversi_sabato
+            and get_stato_iscrizioni() == "aperte" and not iscrizione_completa(iscrizione)):
         return redirect(url_for("percorso_iscrizione"))
 
     laboratorio_mattino = (
@@ -739,8 +823,18 @@ def riepilogo_iscrizione():
             iscrizione.non_partecipa_pomeriggio if iscrizione else False
         ),
         completa=iscrizione_completa(iscrizione),
+        nomi_gruppi_domenica=NOMI_GRUPPI_DOMENICA,
         iscrizioni_aperte=get_stato_iscrizioni() == "aperte",
     )
+
+@app.route("/import_iscritti/valida", methods=["POST"])
+@admin_required(api=True)
+def valida_anteprima_partecipanti():
+    dati, errore = valida_import_partecipanti(request.get_json(silent=True))
+    if errore:
+        return {"ok": False, "errore": errore}, 400
+    return {"ok": True, "partecipanti": dati}
+
 
 @app.route("/import_iscritti", methods=["GET", "POST"])
 @admin_required()
@@ -751,81 +845,247 @@ def import_iscritti():
             return {"ok": False, "errore": errore}, 400
 
         try:
+            inseriti = aggiornati = 0
             for riga in dati:
-                partecipante = Partecipante.query.get(riga["id"])
+                partecipante = db.session.get(Partecipante, riga["id"])
                 if partecipante is None:
-                    db.session.add(
-                        Partecipante(
-                            id=riga["id"],
-                            nome=riga["nome"],
-                            cognome=riga["cognome"],
-                        )
-                    )
+                    partecipante = Partecipante(id=riga["id"])
+                    db.session.add(partecipante)
+                    inseriti += 1
+                else:
+                    aggiornati += 1
+                # Solo i campi autorizzati dal CSV: nessuna assegnazione o iscrizione.
+                for campo, valore in riga.items():
+                    if campo != "id":
+                        setattr(partecipante, campo, valore)
 
             registra_ultimo_import(ULTIMO_IMPORT_PARTECIPANTI_KEY)
+            ultimo_import = get_ultimo_import(ULTIMO_IMPORT_PARTECIPANTI_KEY)
             db.session.commit()
-            return {"ok": True}
+            return {
+                "ok": True, "inseriti": inseriti, "aggiornati": aggiornati,
+                "totale": len(dati),
+                "ultimo_import": ultimo_import,
+            }
         except SQLAlchemyError:
             db.session.rollback()
-            app.logger.exception("Errore durante l'import dei partecipanti")
+            app.logger.error("Errore durante l'import dei partecipanti")
             return {
                 "ok": False,
-                "errore": "Non è stato possibile completare l'import dei partecipanti.",
+                "errore": "Non è stato possibile completare l'import dei partecipanti. Nessuna modifica salvata.",
             }, 500
     return render_template(
         "import_iscritti.html",
         ultimo_import=get_ultimo_import(ULTIMO_IMPORT_PARTECIPANTI_KEY),
+        colonne_csv=COLONNE_CSV_PARTECIPANTI,
     )
 
 @app.route("/import_laboratori", methods=["GET", "POST"])
 @admin_required()
 def import_laboratori():
     if request.method == "POST":
-        if Iscrizione.query.first() is not None:
-            return {
-                "ok": False,
-                "errore": (
-                    "Non è possibile reimportare i laboratori perché esistono "
-                    "già delle iscrizioni."
-                ),
-            }, 409
-
         dati, errore = valida_import_laboratori(request.get_json(silent=True))
         if errore:
             return {"ok": False, "errore": errore}, 400
 
         try:
-            Laboratorio.query.delete()
-
+            # Stesso ordine dei lock usato dal salvataggio delle iscrizioni.
+            # Su MariaDB restano acquisiti fino al commit/rollback: i conteggi
+            # successivi non possono essere superati da nuove assegnazioni.
+            Laboratorio.query.order_by(Laboratorio.id).with_for_update().all()
+            operazioni = []
+            id_visti = set()
             for tipologia, chiave in (
                 ("mattino", "lab_mattino"),
                 ("pomeriggio", "lab_pomeriggio"),
             ):
                 for riga in dati[chiave]:
-                    db.session.add(
-                        Laboratorio(
-                            id_lab=riga["id"],
-                            titolo=riga["titolo"],
-                            descrizione=riga["descrizione"],
-                            posti=riga["posti"],
-                            tipologia=tipologia,
-                        )
-                    )
+                    corrispondenze = Laboratorio.query.filter_by(
+                        tipologia=tipologia, id_lab=riga["id"],
+                    ).order_by(Laboratorio.id).with_for_update().all()
+                    if len(corrispondenze) > 1:
+                        db.session.rollback()
+                        return {
+                            "ok": False,
+                            "errore": f"Import annullato: più laboratori nel database per ({tipologia}, {riga['id']}). Risolvi i duplicati prima di reimportare.",
+                        }, 409
+                    laboratorio = corrispondenze[0] if corrispondenze else None
+                    if laboratorio is not None:
+                        # Anche codici distinti nel JSON possono coincidere
+                        # secondo la collation del database.
+                        if laboratorio.id in id_visti:
+                            db.session.rollback()
+                            return {
+                                "ok": False,
+                                "errore": f"Import annullato: più righe identificano il laboratorio {riga['id']} del {tipologia}.",
+                            }, 400
+                        id_visti.add(laboratorio.id)
+                        if riga["posti"] < laboratorio.posti:
+                            scelta = getattr(Iscrizione, f"scelta_{tipologia}")
+                            occupati = Iscrizione.query.filter(scelta == laboratorio.id).count()
+                            if riga["posti"] < occupati:
+                                db.session.rollback()
+                                return {
+                                    "ok": False,
+                                    "errore": f"Import annullato: il laboratorio {riga['id']} del {tipologia} ha {occupati} iscritti; non puoi ridurre i posti a {riga['posti']}.",
+                                }, 409
+                    operazioni.append((tipologia, riga, laboratorio))
+
+            # Nessuna scrittura prima della verifica di entrambe le fasce.
+            inseriti = aggiornati = 0
+            for tipologia, riga, laboratorio in operazioni:
+                if laboratorio is None:
+                    laboratorio = Laboratorio(id_lab=riga["id"], tipologia=tipologia)
+                    db.session.add(laboratorio)
+                    inseriti += 1
+                else:
+                    aggiornati += 1
+                laboratorio.titolo = riga["titolo"]
+                laboratorio.descrizione = riga["descrizione"]
+                laboratorio.posti = riga["posti"]
 
             registra_ultimo_import(ULTIMO_IMPORT_LABORATORI_KEY)
             db.session.commit()
-            return {"ok": True}
+            return {
+                "ok": True, "inseriti": inseriti, "aggiornati": aggiornati,
+                "totale": len(operazioni),
+            }
         except SQLAlchemyError:
             db.session.rollback()
             app.logger.exception("Errore durante l'import dei laboratori")
             return {
                 "ok": False,
-                "errore": "Non è stato possibile completare l'import dei laboratori.",
+                "errore": "Non è stato possibile completare l'import dei laboratori. Nessuna modifica salvata.",
             }, 500
     return render_template(
         "import_lab.html",
         ultimo_import=get_ultimo_import(ULTIMO_IMPORT_LABORATORI_KEY),
     )
+
+def intero_form(valore):
+    testo = str(valore or "").strip()
+    return int(testo) if re.fullmatch(r"[0-9]{1,10}", testo) else None
+
+
+@app.route("/admin/partecipanti/nuovo", methods=["GET", "POST"])
+@app.route("/admin/partecipanti/<int:partecipante_id>/modifica", methods=["GET", "POST"])
+@admin_required()
+def modifica_partecipante(partecipante_id=None):
+    persona = db.session.get(Partecipante, partecipante_id) if partecipante_id is not None else None
+    if partecipante_id is not None and persona is None:
+        abort(404)
+    valori = {campo: getattr(persona, campo) if persona else ""
+              for campo in COLONNE_CSV_PARTECIPANTI.values()}
+    if request.method == "POST":
+        valori = {campo: request.form.get(campo, "") for campo in COLONNE_CSV_PARTECIPANTI.values()}
+        valori["id"] = intero_form(valori["id"])
+        dati, errore = valida_import_partecipanti([valori])
+        if persona is not None and valori["id"] != persona.id:
+            errore = "Il codice censimento non può essere modificato."
+        if not errore:
+            try:
+                if persona is None:
+                    if db.session.get(Partecipante, valori["id"]) is not None:
+                        errore = "Questo codice censimento è già presente."
+                    else:
+                        persona = Partecipante(id=valori["id"], gruppo_domenica=None)
+                        db.session.add(persona)
+                else:
+                    persona = Partecipante.query.filter_by(id=partecipante_id).with_for_update().one()
+                if not errore:
+                    for campo, valore in dati[0].items():
+                        if campo != "id":
+                            setattr(persona, campo, valore)
+                    db.session.commit()
+                    flash("Partecipante salvato.", "success")
+                    return redirect(url_for("gestione_iscrizioni"))
+            except IntegrityError:
+                db.session.rollback()
+                errore = "Salvataggio non riuscito: verifica che il codice censimento non sia già presente."
+            except SQLAlchemyError:
+                db.session.rollback()
+                errore = "Non è stato possibile salvare il partecipante. Nessuna modifica salvata."
+        db.session.rollback()
+        flash(errore, "warning")
+        if partecipante_id is not None:
+            valori["id"] = partecipante_id
+    return render_template("form_partecipante.html", valori=valori,
+                           modifica=partecipante_id is not None,
+                           colonne=COLONNE_CSV_PARTECIPANTI), (400 if request.method == "POST" else 200)
+
+
+@app.route("/admin/laboratori/nuovo", methods=["GET", "POST"])
+@app.route("/admin/laboratori/<int:laboratorio_id>/modifica", methods=["GET", "POST"])
+@admin_required()
+def modifica_laboratorio(laboratorio_id=None):
+    laboratorio = db.session.get(Laboratorio, laboratorio_id) if laboratorio_id is not None else None
+    if laboratorio_id is not None and laboratorio is None:
+        abort(404)
+    valori = {campo: getattr(laboratorio, campo) if laboratorio else ""
+              for campo in ("tipologia", "id_lab", "titolo", "descrizione", "posti")}
+    if request.method == "POST":
+        valori = {campo: request.form.get(campo, "") for campo in valori}
+        riga, errore = valida_laboratorio({
+            "id": valori["id_lab"], "titolo": valori["titolo"],
+            "descrizione": valori["descrizione"], "posti": intero_form(valori["posti"]),
+        })
+        if valori["tipologia"] not in ("mattino", "pomeriggio"):
+            errore = "Scegli mattino o pomeriggio."
+        if laboratorio is not None and (valori["tipologia"] != laboratorio.tipologia
+                                        or valori["id_lab"] != laboratorio.id_lab):
+            errore = "Codice e fascia del laboratorio non possono essere modificati."
+        if not errore:
+            try:
+                if laboratorio is None:
+                    if Laboratorio.query.filter_by(tipologia=valori["tipologia"], id_lab=riga["id"]).first():
+                        errore = "Esiste già un laboratorio con questo codice nella fascia selezionata."
+                    else:
+                        laboratorio = Laboratorio(id_lab=riga["id"], tipologia=valori["tipologia"])
+                        db.session.add(laboratorio)
+                else:
+                    laboratorio = Laboratorio.query.filter_by(id=laboratorio_id).populate_existing().with_for_update().one()
+                    scelta = getattr(Iscrizione, f"scelta_{laboratorio.tipologia}")
+                    occupati = Iscrizione.query.filter(scelta == laboratorio.id).count()
+                    if riga["posti"] < occupati:
+                        errore = f"Il laboratorio ha {occupati} iscritti: i posti non possono essere inferiori."
+                if not errore:
+                    for campo in ("titolo", "descrizione", "posti"):
+                        setattr(laboratorio, campo, riga[campo])
+                    db.session.commit()
+                    flash("Laboratorio salvato.", "success")
+                    return redirect(url_for("gestione_dati"))
+            except SQLAlchemyError:
+                db.session.rollback()
+                errore = "Non è stato possibile salvare il laboratorio. Nessuna modifica salvata."
+        db.session.rollback()
+        flash(errore, "warning")
+        if laboratorio_id is not None:
+            valori["id_lab"] = laboratorio.id_lab
+            valori["tipologia"] = laboratorio.tipologia
+    return render_template("form_laboratorio.html", valori=valori,
+                           modifica=laboratorio_id is not None), (400 if request.method == "POST" else 200)
+
+
+@app.route("/admin/partecipanti/<int:partecipante_id>/reset_sabato", methods=["POST"])
+@admin_required()
+def reset_sabato_partecipante(partecipante_id):
+    try:
+        persona = Partecipante.query.filter_by(id=partecipante_id).with_for_update().first()
+        if persona is None:
+            abort(404)
+        iscrizione = get_iscrizione_partecipante(partecipante_id)
+        if iscrizione is not None:
+            laboratori_id = [id_lab for id_lab in (iscrizione.scelta_mattino, iscrizione.scelta_pomeriggio)
+                             if id_lab is not None]
+            Laboratorio.query.filter(Laboratorio.id.in_(laboratori_id)).order_by(Laboratorio.id).with_for_update().all()
+            db.session.delete(iscrizione)
+        db.session.commit()
+        flash(f"Iscrizioni del sabato azzerate per il codice {partecipante_id}.", "success")
+    except SQLAlchemyError:
+        db.session.rollback()
+        flash("Non è stato possibile azzerare le iscrizioni. Nessuna modifica salvata.", "warning")
+    return redirect(url_for("gestione_iscrizioni"))
+
 
 def errore_richiesta_reset(conferma_attesa):
     password_attuale = request.form.get("password_attuale", "")
@@ -841,7 +1101,7 @@ def errore_richiesta_reset(conferma_attesa):
 @app.route("/admin/gestione_dati")
 @admin_required()
 def gestione_dati():
-    return render_template("gestione_dati.html")
+    return render_template("gestione_dati.html", laboratori=Laboratorio.query.order_by(Laboratorio.tipologia, Laboratorio.id_lab, Laboratorio.id).all())
 
 @app.route("/admin/gestione_dati/reset_iscrizioni", methods=["POST"])
 @admin_required()
@@ -1007,10 +1267,11 @@ def gestione_iscrizioni():
     )
 
     iscrizioni = [
-        (*riga, stato_iscrizione(riga[0]))
+        (*riga, stato_iscrizione(riga[0], riga[1]))
         for riga in iscrizioni
     ]
     totale_partecipanti = len(iscrizioni)
+    totale_sabato = sum(p.deve_iscriversi_sabato for _, p, *_ in iscrizioni)
     iscrizioni_complete = sum(
         stato == "completo" for *_, stato in iscrizioni
     )
@@ -1021,8 +1282,8 @@ def gestione_iscrizioni():
         stato == "non_iniziato" for *_, stato in iscrizioni
     )
     percentuale_completamento = (
-        (iscrizioni_complete / totale_partecipanti * 100)
-        if totale_partecipanti
+        (iscrizioni_complete / totale_sabato * 100)
+        if totale_sabato
         else 0
     )
 
@@ -1030,11 +1291,85 @@ def gestione_iscrizioni():
         "gestione_iscrizioni.html",
         iscrizioni=iscrizioni,
         totale_partecipanti=totale_partecipanti,
+        totale_sabato=totale_sabato,
         iscrizioni_complete=iscrizioni_complete,
         iscrizioni_incomplete=iscrizioni_incomplete,
         partecipanti_non_iniziati=partecipanti_non_iniziati,
         percentuale_completamento=percentuale_completamento,
     )
+
+def leggi_distribuzione_ab():
+    """Riepilogo delle iscrizioni effettive e delle A/B già persistite."""
+    conteggi = {}
+    for fascia in ("mattino", "pomeriggio"):
+        scelta = getattr(Iscrizione, f"scelta_{fascia}")
+        sottogruppo = getattr(Iscrizione, f"sottogruppo_{fascia}")
+        righe = db.session.query(scelta, sottogruppo, func.count(Iscrizione.id)).filter(
+            scelta.isnot(None), getattr(Iscrizione, f"non_partecipa_{fascia}").is_(False),
+        ).group_by(scelta, sottogruppo).all()
+        for laboratorio_id, gruppo, totale in righe:
+            valori = conteggi.setdefault((fascia, laboratorio_id), {"totale": 0, "A": 0, "B": 0})
+            valori["totale"] += totale
+            if gruppo in ("A", "B"):
+                valori[gruppo] += totale
+    return [
+        {"laboratorio": laboratorio,
+         **conteggi.get((laboratorio.tipologia, laboratorio.id), {"totale": 0, "A": 0, "B": 0})}
+        for laboratorio in Laboratorio.query.filter(
+            Laboratorio.tipologia.in_(("mattino", "pomeriggio")),
+        ).order_by(Laboratorio.tipologia, Laboratorio.id).all()
+    ]
+
+
+def ricalcola_sottogruppi_ab():
+    try:
+        # Stesso ordine del salvataggio scelte: partecipanti, laboratori, iscrizioni.
+        partecipanti = (Partecipante.query.order_by(Partecipante.id)
+                        .populate_existing().with_for_update().all())
+        laboratori = (Laboratorio.query.filter(Laboratorio.tipologia.in_(("mattino", "pomeriggio")))
+                      .order_by(Laboratorio.id).populate_existing().with_for_update().all())
+        iscrizioni = (Iscrizione.query.order_by(Iscrizione.id)
+                      .populate_existing().with_for_update().all())
+        persone = {persona.id: persona for persona in partecipanti}
+        for iscrizione in iscrizioni:
+            iscrizione.sottogruppo_mattino = None
+            iscrizione.sottogruppo_pomeriggio = None
+        for fascia in ("mattino", "pomeriggio"):
+            for laboratorio in laboratori:
+                if laboratorio.tipologia != fascia:
+                    continue
+                iscritti = [i for i in iscrizioni
+                            if getattr(i, f"scelta_{fascia}") == laboratorio.id
+                            and not getattr(i, f"non_partecipa_{fascia}")]
+                assegnazioni = calcola_sottogruppi_ab(persone[i.partecipante] for i in iscritti)
+                for iscrizione in iscritti:
+                    setattr(iscrizione, f"sottogruppo_{fascia}", assegnazioni[iscrizione.partecipante])
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
+
+
+@app.route("/admin/iscrizioni/gruppi-ab")
+@admin_required()
+def gruppi_ab_sabato():
+    return render_template("gruppi_ab_sabato.html", distribuzione=leggi_distribuzione_ab())
+
+
+@app.route("/admin/iscrizioni/gruppi-ab/ricalcola", methods=["POST"])
+@admin_required(api=True)
+def ricalcola_ab_sabato():
+    if request.form.get("conferma") != "ricalcola":
+        return {"ok": False, "errore": "Conferma il ricalcolo dei gruppi A/B sabato."}, 400
+    try:
+        ricalcola_sottogruppi_ab()
+    except Exception:
+        app.logger.exception("Errore durante il ricalcolo dei gruppi A/B sabato")
+        flash("Ricalcolo non riuscito. Tutte le assegnazioni A/B precedenti sono state conservate.", "danger")
+        return render_template("gruppi_ab_sabato.html", distribuzione=leggi_distribuzione_ab()), 500
+    flash("Gruppi A/B sabato ricalcolati per tutti i laboratori.", "success")
+    return redirect(url_for("gruppi_ab_sabato"))
+
 
 def formatta_foglio_excel(foglio, larghezze_colonne):
     foglio.freeze_panes = "A2"
@@ -1088,75 +1423,48 @@ def esporta_iscrizioni():
     return render_template("esporta_iscrizioni.html")
 
 
+def dati_export_iscrizioni():
+    return (db.session.query(Partecipante, Iscrizione)
+            .outerjoin(Iscrizione, Iscrizione.partecipante == Partecipante.id)
+            .order_by(Partecipante.cognome, Partecipante.nome, Partecipante.id).all())
+
+
+def celle_export_fascia(partecipante, iscrizione, fascia, laboratori):
+    if not partecipante.deve_iscriversi_sabato:
+        return "Iscrizione non richiesta", None
+    if iscrizione and getattr(iscrizione, f"non_partecipa_{fascia}"):
+        return TESTO_NON_PARTECIPA, None
+    laboratorio = laboratori.get(getattr(iscrizione, f"scelta_{fascia}", None))
+    if laboratorio is None:
+        return "Non iscritto", None
+    return (f"{laboratorio.id_lab} - {laboratorio.titolo}",
+            getattr(iscrizione, f"sottogruppo_{fascia}"))
+
+
+def compila_foglio_partecipanti(foglio, partecipanti, laboratori):
+    foglio.append([
+        "Codice censimento", "Nome", "Cognome", "Gruppo", "Zona", "Regione", "Email",
+        "Laboratorio mattino", "Gruppo A/B mattino",
+        "Laboratorio pomeriggio", "Gruppo A/B pomeriggio",
+    ])
+    for partecipante, iscrizione in partecipanti:
+        foglio.append([
+            partecipante.id, partecipante.nome, partecipante.cognome,
+            partecipante.gruppo, partecipante.zona, partecipante.regione, partecipante.email,
+            *celle_export_fascia(partecipante, iscrizione, "mattino", laboratori),
+            *celle_export_fascia(partecipante, iscrizione, "pomeriggio", laboratori),
+        ])
+    formatta_foglio_excel(foglio, (20, 24, 24, 24, 24, 24, 36, 42, 22, 42, 24))
+
+
 @app.route("/admin/iscrizioni/esporta/elenco")
 @admin_required()
 def scarica_elenco_iscrizioni():
-    laboratorio_mattino = aliased(Laboratorio)
-    laboratorio_pomeriggio = aliased(Laboratorio)
-    iscrizioni = (
-        db.session.query(
-            Iscrizione,
-            Partecipante,
-            laboratorio_mattino,
-            laboratorio_pomeriggio,
-        )
-        .select_from(Partecipante)
-        .join(Iscrizione, Iscrizione.partecipante == Partecipante.id)
-        .outerjoin(
-            laboratorio_mattino,
-            Iscrizione.scelta_mattino == laboratorio_mattino.id,
-        )
-        .outerjoin(
-            laboratorio_pomeriggio,
-            Iscrizione.scelta_pomeriggio == laboratorio_pomeriggio.id,
-        )
-        .filter(
-            or_(
-                Iscrizione.scelta_mattino.is_not(None),
-                Iscrizione.scelta_pomeriggio.is_not(None),
-                Iscrizione.non_partecipa_mattino.is_(True),
-                Iscrizione.non_partecipa_pomeriggio.is_(True),
-            )
-        )
-        .order_by(Partecipante.cognome, Partecipante.nome)
-        .all()
-    )
-
     workbook = Workbook()
     foglio = workbook.active
     foglio.title = "Iscrizioni"
-    foglio.append(
-        [
-            "Codice censimento",
-            "Nome",
-            "Cognome",
-            "Codice laboratorio mattutino",
-            "Laboratorio mattutino",
-            "Codice laboratorio pomeridiano",
-            "Laboratorio pomeridiano",
-        ]
-    )
-    for iscrizione, partecipante, lab_mattino, lab_pomeriggio in iscrizioni:
-        foglio.append(
-            [
-                partecipante.id,
-                partecipante.nome,
-                partecipante.cognome,
-                lab_mattino.id_lab if lab_mattino else None,
-                (
-                    TESTO_NON_PARTECIPA
-                    if iscrizione.non_partecipa_mattino
-                    else lab_mattino.titolo if lab_mattino else None
-                ),
-                lab_pomeriggio.id_lab if lab_pomeriggio else None,
-                (
-                    TESTO_NON_PARTECIPA
-                    if iscrizione.non_partecipa_pomeriggio
-                    else lab_pomeriggio.titolo if lab_pomeriggio else None
-                ),
-            ]
-        )
-    formatta_foglio_excel(foglio, (20, 24, 24, 31, 36, 33, 36))
+    compila_foglio_partecipanti(foglio, dati_export_iscrizioni(),
+                              {lab.id: lab for lab in Laboratorio.query.all()})
     return invia_file_excel(workbook, "iscrizioni_per_me_sei_avventura")
 
 
@@ -1164,95 +1472,112 @@ def scarica_elenco_iscrizioni():
 @admin_required()
 def scarica_iscrizioni_per_laboratorio():
     laboratori = Laboratorio.query.order_by(
-        Laboratorio.tipologia,
-        Laboratorio.id_lab,
-        Laboratorio.titolo,
-        Laboratorio.id,
+        Laboratorio.tipologia, Laboratorio.id_lab, Laboratorio.titolo, Laboratorio.id,
     ).all()
-    assegnazioni = (
-        db.session.query(
-            Partecipante,
-            Iscrizione.scelta_mattino,
-            Iscrizione.scelta_pomeriggio,
-            Iscrizione.non_partecipa_mattino,
-            Iscrizione.non_partecipa_pomeriggio,
-        )
-        .join(Iscrizione, Iscrizione.partecipante == Partecipante.id)
-        .filter(
-            or_(
-                Iscrizione.scelta_mattino.is_not(None),
-                Iscrizione.scelta_pomeriggio.is_not(None),
-                Iscrizione.non_partecipa_mattino.is_(True),
-                Iscrizione.non_partecipa_pomeriggio.is_(True),
-            )
-        )
-        .order_by(Partecipante.cognome, Partecipante.nome)
-        .all()
-    )
+    partecipanti = dati_export_iscrizioni()
     iscritti_per_laboratorio = {}
     non_partecipanti = {"mattino": [], "pomeriggio": []}
-    for (
-        partecipante,
-        laboratorio_mattino_id,
-        laboratorio_pomeriggio_id,
-        non_partecipa_mattino,
-        non_partecipa_pomeriggio,
-    ) in assegnazioni:
-        if laboratorio_mattino_id is not None:
-            iscritti_per_laboratorio.setdefault(laboratorio_mattino_id, []).append(
-                partecipante
-            )
-        if laboratorio_pomeriggio_id is not None:
-            iscritti_per_laboratorio.setdefault(laboratorio_pomeriggio_id, []).append(
-                partecipante
-            )
-        if non_partecipa_mattino:
-            non_partecipanti["mattino"].append(partecipante)
-        if non_partecipa_pomeriggio:
-            non_partecipanti["pomeriggio"].append(partecipante)
+    for partecipante, iscrizione in partecipanti:
+        if iscrizione is None:
+            continue
+        for fascia in ("mattino", "pomeriggio"):
+            if getattr(iscrizione, f"non_partecipa_{fascia}"):
+                if partecipante.deve_iscriversi_sabato:
+                    non_partecipanti[fascia].append(partecipante)
+            else:
+                laboratorio_id = getattr(iscrizione, f"scelta_{fascia}")
+                if laboratorio_id is not None:
+                    iscritti_per_laboratorio.setdefault((fascia, laboratorio_id), []).append(
+                        (partecipante, getattr(iscrizione, f"sottogruppo_{fascia}"))
+                    )
 
     workbook = Workbook()
-    workbook.remove(workbook.active)
-    nomi_usati = set()
+    foglio = workbook.active
+    foglio.title = "Tutti i partecipanti"
+    compila_foglio_partecipanti(foglio, partecipanti, {lab.id: lab for lab in laboratori})
+    nomi_usati = {foglio.title.casefold()}
     for laboratorio in laboratori:
-        foglio = workbook.create_sheet(
-            nome_foglio_laboratorio(laboratorio, nomi_usati)
-        )
-        foglio.append(["Codice censimento", "Nome", "Cognome"])
-        for partecipante in iscritti_per_laboratorio.get(laboratorio.id, []):
-            foglio.append(
-                [partecipante.id, partecipante.nome, partecipante.cognome]
-            )
-        formatta_foglio_excel(foglio, (20, 24, 24))
+        foglio = workbook.create_sheet(nome_foglio_laboratorio(laboratorio, nomi_usati))
+        foglio.append(["Codice censimento", "Nome", "Cognome", "Gruppo"])
+        for partecipante, gruppo in iscritti_per_laboratorio.get((laboratorio.tipologia, laboratorio.id), []):
+            foglio.append([partecipante.id, partecipante.nome, partecipante.cognome, gruppo])
+        formatta_foglio_excel(foglio, (20, 24, 24, 12))
 
-    for tipologia, nome_foglio in (
-        ("mattino", "M - Non partecipa"),
-        ("pomeriggio", "P - Non partecipa"),
-    ):
-        foglio = workbook.create_sheet(
-            nome_foglio_univoco(nome_foglio, nomi_usati)
-        )
+    for tipologia, nome_foglio in (("mattino", "M - Non partecipa"), ("pomeriggio", "P - Non partecipa")):
+        foglio = workbook.create_sheet(nome_foglio_univoco(nome_foglio, nomi_usati))
         foglio.append(["Codice censimento", "Nome", "Cognome"])
         for partecipante in non_partecipanti[tipologia]:
-            foglio.append(
-                [partecipante.id, partecipante.nome, partecipante.cognome]
-            )
+            foglio.append([partecipante.id, partecipante.nome, partecipante.cognome])
         formatta_foglio_excel(foglio, (20, 24, 24))
-
-    return invia_file_excel(
-        workbook,
-        "iscrizioni_per_laboratorio_per_me_sei_avventura",
-    )
+    return invia_file_excel(workbook, "iscrizioni_per_laboratorio_per_me_sei_avventura")
 
 
 def errore_api_suddivisione(messaggio, stato=400):
     return {"ok": False, "errore": messaggio}, stato
 
 
+def leggi_distribuzione_domenica():
+    """Legge esclusivamente le assegnazioni persistite, compresi i gruppi vuoti."""
+    conteggi = dict(db.session.query(
+        Partecipante.gruppo_domenica, func.count(Partecipante.id),
+    ).filter(Partecipante.gruppo_domenica.isnot(None)).group_by(
+        Partecipante.gruppo_domenica,
+    ).all())
+    gruppi = {numero: conteggi.get(numero, 0)
+              for numero in range(1, NUMERO_GRUPPI_DOMENICA + 1)}
+    return {
+        "gruppi": gruppi,
+        "totale_assegnati": sum(gruppi.values()),
+        "dimensione_minima": min(gruppi.values()),
+        "dimensione_massima": max(gruppi.values()),
+    }
+
+
+def ricalcola_gruppi_domenica():
+    try:
+        partecipanti = (Partecipante.query.order_by(Partecipante.id)
+                        .populate_existing().with_for_update().all())
+        assegnazioni = calcola_gruppi_domenica(partecipanti)
+        for persona in partecipanti:
+            persona.gruppo_domenica = assegnazioni.get(persona.id)
+        set_sys_option(ULTIMO_RICALCOLO_DOMENICA_KEY, datetime.now(ZoneInfo("Europe/Rome")).isoformat())
+        db.session.commit()
+        return len(assegnazioni)
+    except Exception:
+        db.session.rollback()
+        raise
+
+
 @app.route("/admin/suddivisione-gruppi")
 @admin_required()
 def suddivisione_gruppi():
-    return render_template("suddivisione_gruppi.html")
+    return pagina_suddivisione_domenica()
+
+
+def pagina_suddivisione_domenica():
+    return render_template(
+        "suddivisione_gruppi.html",
+        inclusi=Partecipante.query.filter(Partecipante.includi_domenica.is_(True)).count(),
+        numero_gruppi=NUMERO_GRUPPI_DOMENICA,
+        nomi_gruppi_domenica=NOMI_GRUPPI_DOMENICA,
+        riepilogo=leggi_distribuzione_domenica(),
+        ultimo_ricalcolo=get_ultimo_import(ULTIMO_RICALCOLO_DOMENICA_KEY),
+    )
+
+
+@app.route("/admin/suddivisione-gruppi/ricalcola", methods=["POST"])
+@admin_required(api=True)
+def ricalcola_domenica():
+    if request.form.get("conferma") != "ricalcola":
+        return errore_api_suddivisione("Conferma il ricalcolo dei gruppi domenica.")
+    try:
+        totale = ricalcola_gruppi_domenica()
+    except Exception:
+        app.logger.exception("Errore durante il ricalcolo dei gruppi domenica")
+        flash("Ricalcolo non riuscito. Le assegnazioni precedenti sono state conservate.", "danger")
+        return pagina_suddivisione_domenica(), 500
+    flash(f"Gruppi domenica ricalcolati: {totale} partecipanti assegnati.", "success")
+    return redirect(url_for("suddivisione_gruppi"))
 
 
 @app.route("/admin/suddivisione-gruppi/valida", methods=["POST"])
@@ -1328,67 +1653,24 @@ def genera_suddivisione_gruppi():
             workbook.close()
 
 
-def descrivi_scelta_comunicazione(laboratorio, non_partecipa):
-    if non_partecipa:
-        return TESTO_NON_PARTECIPA
-    if laboratorio is None:
-        return ""
-    return f"{laboratorio.id_lab} — {laboratorio.titolo}"
-
-
-def leggi_dati_sabato_comunicazioni():
-    laboratorio_mattino = aliased(Laboratorio)
-    laboratorio_pomeriggio = aliased(Laboratorio)
-    risultati = (
-        db.session.query(
-            Partecipante,
-            Iscrizione,
-            laboratorio_mattino,
-            laboratorio_pomeriggio,
-        )
-        .select_from(Partecipante)
-        .outerjoin(Iscrizione, Iscrizione.partecipante == Partecipante.id)
-        .outerjoin(
-            laboratorio_mattino,
-            Iscrizione.scelta_mattino == laboratorio_mattino.id,
-        )
-        .outerjoin(
-            laboratorio_pomeriggio,
-            Iscrizione.scelta_pomeriggio == laboratorio_pomeriggio.id,
-        )
-        .order_by(Partecipante.cognome, Partecipante.nome, Partecipante.id)
-        .all()
-    )
-    return [
-        {
+def leggi_dati_comunicazioni():
+    laboratori = {lab.id: lab for lab in Laboratorio.query.all()}
+    righe = []
+    for partecipante, iscrizione in dati_export_iscrizioni():
+        mattino, ab_mattino = celle_export_fascia(partecipante, iscrizione, "mattino", laboratori)
+        pomeriggio, ab_pomeriggio = celle_export_fascia(partecipante, iscrizione, "pomeriggio", laboratori)
+        righe.append({
             "codice": partecipante.id,
             "nome": partecipante.nome,
             "cognome": partecipante.cognome,
-            "sabato_mattina": descrivi_scelta_comunicazione(
-                lab_mattino,
-                iscrizione.non_partecipa_mattino if iscrizione else False,
-            ),
-            "sabato_pomeriggio": descrivi_scelta_comunicazione(
-                lab_pomeriggio,
-                iscrizione.non_partecipa_pomeriggio if iscrizione else False,
-            ),
-            "sabato_incompleto": not iscrizione_completa(iscrizione),
-        }
-        for partecipante, iscrizione, lab_mattino, lab_pomeriggio in risultati
-    ]
-
-
-def risposta_errore_comunicazioni(errore):
-    return {
-        "ok": False,
-        "errore": str(errore),
-        "anomalie": {
-            "duplicati": errore.duplicati,
-            "codici_excel_non_database": [],
-            "partecipanti_senza_domenica": [],
-            "iscrizioni_sabato_incomplete": [],
-        },
-    }, 400
+            "email": partecipante.email,
+            "sabato_mattina": mattino,
+            "sottogruppo_mattino": ab_mattino,
+            "sabato_pomeriggio": pomeriggio,
+            "sottogruppo_pomeriggio": ab_pomeriggio,
+            "domenica_mattina": descrivi_domenica_comunicazione(partecipante),
+        })
+    return righe
 
 
 @app.route("/admin/comunicazioni")
@@ -1400,78 +1682,26 @@ def genera_file_comunicazioni():
 @app.route("/admin/comunicazioni/valida", methods=["POST"])
 @admin_required(api=True)
 def valida_file_comunicazioni():
-    workbook = None
-    try:
-        workbook = carica_excel_comunicazioni(request.files.get("file"))
-        assegnazioni = estrai_assegnazioni_domenica(workbook)
-        righe, anomalie = unisci_dati_comunicazioni(
-            leggi_dati_sabato_comunicazioni(),
-            assegnazioni,
-        )
-        return {
-            "ok": True,
-            "partecipanti_esportabili": len(righe),
-            "assegnazioni_domenica": len(assegnazioni),
-            "anomalie": anomalie,
-        }
-    except ErroreComunicazioni as errore:
-        return risposta_errore_comunicazioni(errore)
-    except HTTPException:
-        raise
-    except Exception:
-        app.logger.exception("Errore durante la validazione del file comunicazioni")
-        return {
-            "ok": False,
-            "errore": "Non è stato possibile verificare il file comunicazioni.",
-        }, 500
-    finally:
-        if workbook is not None:
-            workbook.close()
+    return {"ok": False, "errore": "La validazione Excel non è più disponibile. Genera il file dai dati presenti nel sistema."}, 410
 
 
 @app.route("/admin/comunicazioni/genera", methods=["POST"])
 @admin_required(api=True)
 def scarica_file_comunicazioni():
-    workbook_sorgente = None
-    workbook_output = None
+    workbook = None
     try:
-        workbook_sorgente = carica_excel_comunicazioni(request.files.get("file"))
-        assegnazioni = estrai_assegnazioni_domenica(workbook_sorgente)
-        righe, anomalie = unisci_dati_comunicazioni(
-            leggi_dati_sabato_comunicazioni(),
-            assegnazioni,
-        )
-        workbook_output = crea_workbook_comunicazioni(righe)
-        file_excel = io.BytesIO()
-        workbook_output.save(file_excel)
-        file_excel.seek(0)
-        data_esportazione = datetime.now(ZoneInfo("Europe/Rome")).date().isoformat()
-        risposta = send_file(
-            file_excel,
-            as_attachment=True,
-            download_name=f"comunicazioni_partecipanti_{data_esportazione}.xlsx",
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+        righe = leggi_dati_comunicazioni()
+        workbook = crea_workbook_comunicazioni(righe)
+        risposta = invia_file_excel(workbook, "comunicazioni_partecipanti")
         risposta.headers["X-Partecipanti-Esportati"] = str(len(righe))
-        risposta.headers["X-Anomalie-Totali"] = str(
-            sum(len(valori) for valori in anomalie.values())
-        )
         return risposta
-    except ErroreComunicazioni as errore:
-        return risposta_errore_comunicazioni(errore)
-    except HTTPException:
-        raise
     except Exception:
         app.logger.exception("Errore durante la generazione del file comunicazioni")
-        return {
-            "ok": False,
-            "errore": "Non è stato possibile generare il file comunicazioni.",
-        }, 500
+        return {"ok": False, "errore": "Non è stato possibile generare il file comunicazioni."}, 500
     finally:
-        if workbook_sorgente is not None:
-            workbook_sorgente.close()
-        if workbook_output is not None:
-            workbook_output.close()
+        if workbook is not None:
+            workbook.close()
+
 
 @app.route("/admin/cambia_password", methods=["GET", "POST"])
 @admin_required()

@@ -19,6 +19,29 @@ MIME_XLSX_CONSENTITI = {
     "application/x-zip-compressed",
 }
 CRITERI_SUDDIVISIONE = ("regione", "ruolo", "foca", "sesso")
+NUMERO_GRUPPI_DOMENICA = 20
+NOMI_GRUPPI_DOMENICA = {
+    1: "Avventura",
+    2: "Bisogno",
+    3: "Cura",
+    4: "Dio",
+    5: "Esperienza",
+    6: "Fuori",
+    7: "Gradualità",
+    8: "Habitus",
+    9: "Incontro",
+    10: "Linguaggio",
+    11: "Mistero",
+    12: "Natura",
+    13: "Occasione",
+    14: "Progettualità",
+    15: "Quotidiano",
+    16: "Responsabilità",
+    17: "Sfida",
+    18: "Tempo",
+    19: "Unicità",
+    20: "Vivere",
+}
 INTESTAZIONI_SUDDIVISIONE = {
     "ruolo": "partecipo in qualità di",
     "foca": "foca",
@@ -65,6 +88,44 @@ def normalizza_sesso(valore):
     if valore_pulito == "f":
         return "F"
     return "Non indicato"
+
+
+def prepara_partecipanti_suddivisione(partecipanti):
+    """Normalizza una copia dei dati DB, ordinata stabilmente per codice."""
+    regioni, ruoli = {}, {}
+    return [
+        {
+            "codice": persona.id,
+            "regione": normalizza_valore_dinamico(persona.regione, regioni),
+            "ruolo": normalizza_valore_dinamico(persona.ruolo, ruoli),
+            "foca": normalizza_foca(persona.foca),
+            "sesso": normalizza_sesso(persona.sesso),
+        }
+        for persona in sorted(partecipanti, key=lambda persona: persona.id)
+    ]
+
+
+def prepara_partecipanti_domenica(partecipanti):
+    return prepara_partecipanti_suddivisione(
+        persona for persona in partecipanti if persona.includi_domenica
+    )
+
+
+def calcola_sottogruppi_ab(partecipanti):
+    dati = prepara_partecipanti_suddivisione(partecipanti)
+    if len(dati) < 2:
+        return {persona["codice"]: "A" for persona in dati}
+    assegnazioni, _ = crea_suddivisione(dati, 2)
+    return {persona["codice"]: ("A", "B")[gruppo - 1]
+            for persona, gruppo in zip(dati, assegnazioni)}
+
+
+def calcola_gruppi_domenica(partecipanti):
+    dati = prepara_partecipanti_domenica(partecipanti)
+    if len(dati) < NUMERO_GRUPPI_DOMENICA:
+        return {persona["codice"]: gruppo for gruppo, persona in enumerate(dati, 1)}
+    assegnazioni, _ = crea_suddivisione(dati, NUMERO_GRUPPI_DOMENICA)
+    return {persona["codice"]: gruppo for persona, gruppo in zip(dati, assegnazioni)}
 
 
 def normalizza_codice_censimento(valore, numero_riga):

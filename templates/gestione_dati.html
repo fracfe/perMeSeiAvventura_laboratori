@@ -12,6 +12,23 @@
   {% endwith %}
 
   <h1 class="h3 mb-3">Gestione dati</h1>
+  <div class="d-flex flex-wrap gap-2 mb-4">
+    <a class="btn btn-success" href="{{ url_for('modifica_partecipante') }}">Aggiungi partecipante</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('gestione_iscrizioni') }}">Elenco e modifica partecipanti</a>
+    <a class="btn btn-success" href="{{ url_for('modifica_laboratorio') }}">Aggiungi laboratorio</a>
+  </div>
+  <h2 class="h4">Laboratori</h2>
+  <div class="table-responsive mb-4">
+    <table class="table">
+      <thead><tr><th>Fascia</th><th>Codice</th><th>Titolo</th><th>Posti</th><th>Azioni</th></tr></thead>
+      <tbody>{% for laboratorio in laboratori %}
+        <tr><td>{{ laboratorio.tipologia }}</td><td>{{ laboratorio.id_lab }}</td>
+          <td>{{ laboratorio.titolo }}</td><td>{{ laboratorio.posti }}</td>
+          <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('modifica_laboratorio', laboratorio_id=laboratorio.id) }}">Modifica</a></td></tr>
+      {% else %}<tr><td colspan="5">Nessun laboratorio presente.</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+  <h2 class="h4">Reset globali</h2>
   <div class="alert alert-danger" role="alert">
     <strong>Attenzione:</strong> queste operazioni cancellano definitivamente i dati indicati.
     Non è disponibile un ripristino automatico.

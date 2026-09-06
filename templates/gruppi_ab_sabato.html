@@ -1,0 +1,35 @@
+{% extends "admin.html" %}
+{% block corpo %}
+<main class="container py-4">
+  {% for categoria, messaggio in get_flashed_messages(with_categories=true) %}
+  <div class="alert alert-{{ categoria }}" role="alert">{{ messaggio }}</div>
+  {% endfor %}
+  <h1 class="h2">Gruppi A/B sabato</h1>
+  <p>Al termine delle iscrizioni, suddividi gli iscritti di ogni laboratorio in due gruppi
+    bilanciati per Regione, ruolo, FoCa e Sesso. Mattino e pomeriggio sono indipendenti.</p>
+  <form method="post" action="{{ url_for('ricalcola_ab_sabato') }}" class="mb-4">
+    <div class="form-check mb-3">
+      <input class="form-check-input" type="checkbox" id="conferma-ab" name="conferma" value="ricalcola" required>
+      <label class="form-check-label" for="conferma-ab">Confermo di sostituire tutte le assegnazioni A/B del sabato.</label>
+    </div>
+    <button class="btn btn-primary" type="submit">Ricalcola gruppi A/B sabato</button>
+  </form>
+  <h2 class="h4">Assegnazioni salvate</h2>
+  <p>Le assegnazioni non si aggiornano automaticamente: dopo modifiche alle scelte, ricalcola.
+    Le rinunce e le persone senza scelta sono escluse.</p>
+  <div class="table-responsive">
+    <table class="table table-striped">
+      <thead><tr><th>Fascia</th><th>Codice</th><th>Titolo</th><th>Iscritti totali</th><th>A</th><th>B</th></tr></thead>
+      <tbody>
+        {% for riga in distribuzione %}
+        <tr><td>{{ riga.laboratorio.tipologia }}</td><td>{{ riga.laboratorio.id_lab }}</td>
+          <td>{{ riga.laboratorio.titolo }}</td><td>{{ riga.totale }}</td><td>{{ riga.A }}</td><td>{{ riga.B }}</td></tr>
+        {% else %}
+        <tr><td colspan="6">Nessun laboratorio del sabato presente.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('gestione_iscrizioni') }}">Torna alle iscrizioni</a>
+</main>
+{% endblock %}

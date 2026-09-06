@@ -3,7 +3,12 @@
 {% block corpo %}
 
 <main class="container-fluid px-5 py-4">
+  {% for categoria, messaggio in get_flashed_messages(with_categories=true) %}
+    <div class="alert alert-{{ categoria }}" role="alert">{{ messaggio }}</div>
+  {% endfor %}
   <h1 class="h3 mb-4">Gestione iscrizioni</h1>
+  <a class="btn btn-outline-primary mb-3" href="{{ url_for('gruppi_ab_sabato') }}">Gruppi A/B sabato</a>
+  <a class="btn btn-success mb-3" href="{{ url_for('modifica_partecipante') }}">Aggiungi partecipante</a>
 
   <section aria-labelledby="riepilogo-iscrizioni">
     <h2 class="h4" id="riepilogo-iscrizioni">Riepilogo</h2>
@@ -43,6 +48,7 @@
       </div>
     </div>
 
+    <p>Iscrizione al sabato richiesta per <strong>{{ totale_sabato }}</strong> partecipanti.</p>
     <p class="h5 mb-3">
       Completamento: {{ "%.1f"|format(percentuale_completamento)|replace(".", ",") }}%
     </p>
@@ -51,7 +57,7 @@
       <div class="alert alert-info" role="alert">
         Non è ancora stato caricato l'elenco dei partecipanti.
       </div>
-    {% else %}
+    {% elif totale_sabato > 0 %}
       <div
         class="progress mb-2"
         role="img"
@@ -60,15 +66,15 @@
       >
         <div
           class="progress-bar bg-success"
-          style="width: {{ iscrizioni_complete / totale_partecipanti * 100 }}%;"
+          style="width: {{ iscrizioni_complete / totale_sabato * 100 }}%;"
         ></div>
         <div
           class="progress-bar bg-warning"
-          style="width: {{ iscrizioni_incomplete / totale_partecipanti * 100 }}%;"
+          style="width: {{ iscrizioni_incomplete / totale_sabato * 100 }}%;"
         ></div>
         <div
           class="progress-bar bg-secondary"
-          style="width: {{ partecipanti_non_iniziati / totale_partecipanti * 100 }}%;"
+          style="width: {{ partecipanti_non_iniziati / totale_sabato * 100 }}%;"
         ></div>
       </div>
     {% endif %}
@@ -99,6 +105,10 @@
         aria-pressed="true"
       >
         Non iniziati ({{ partecipanti_non_iniziati }})
+      </button>
+      <button type="button" class="btn btn-secondary filtro-stato"
+        data-filtro-stato="non_richiesta" data-classe-attiva="btn-secondary" aria-pressed="true">
+        Non richiesta ({{ totale_partecipanti - totale_sabato }})
       </button>
     </div>
   </section>
@@ -145,6 +155,7 @@
             <th>Laboratorio pomeriggio</th>
             <th>Stato</th>
             <th>Ultimo aggiornamento</th>
+            <th>Azioni</th>
           </tr>
         </thead>
         <tbody>
@@ -181,6 +192,8 @@
                   <span class="badge bg-success">Completo</span>
                 {% elif stato == "incompleto" %}
                   <span class="badge bg-warning text-dark">Incompleto</span>
+                {% elif stato == "non_richiesta" %}
+                  <span class="badge bg-secondary">Non richiesta</span>
                 {% else %}
                   <span class="badge bg-secondary">Non iniziato</span>
                 {% endif %}
@@ -190,6 +203,15 @@
                   {{ iscrizione.data.strftime("%d/%m/%Y %H:%M") }}
                 {% else %}
                   —
+                {% endif %}
+              </td>
+              <td>
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('modifica_partecipante', partecipante_id=partecipante.id) }}">Modifica</a>
+                {% if iscrizione %}
+                  <form class="mt-2" method="post" action="{{ url_for('reset_sabato_partecipante', partecipante_id=partecipante.id) }}"
+                    onsubmit="return confirm('Azzerare tutte le scelte del sabato per il codice {{ partecipante.id }}?');">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">Azzera iscrizioni sabato</button>
+                  </form>
                 {% endif %}
               </td>
             </tr>

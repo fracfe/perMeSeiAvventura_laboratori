@@ -1,0 +1,39 @@
+{% extends "admin.html" %}
+{% block corpo %}
+<main class="container py-4" style="max-width: 760px;">
+  {% for categoria, messaggio in get_flashed_messages(with_categories=true) %}
+    <div class="alert alert-{{ categoria }}" role="alert">{{ messaggio }}</div>
+  {% endfor %}
+  <h1 class="h3">{{ 'Modifica laboratorio' if modifica else 'Aggiungi laboratorio' }}</h1>
+  <form method="post">
+    <div class="mb-3">
+      <label class="form-label" for="tipologia">Fascia</label>
+      {% if modifica %}
+        <input class="form-control" name="tipologia" id="tipologia" value="{{ valori.tipologia }}" readonly>
+      {% else %}
+        <select class="form-select" name="tipologia" id="tipologia" required>
+          <option value="">Scegli una fascia</option>
+          {% for fascia in ('mattino', 'pomeriggio') %}
+            <option value="{{ fascia }}" {% if valori.tipologia == fascia %}selected{% endif %}>{{ fascia | capitalize }}</option>
+          {% endfor %}
+        </select>
+      {% endif %}
+    </div>
+    {% for campo, etichetta in [('id_lab', 'Codice laboratorio'), ('titolo', 'Titolo'), ('descrizione', 'Descrizione'), ('posti', 'Posti')] %}
+      <div class="mb-3">
+        <label class="form-label" for="{{ campo }}">{{ etichetta }}</label>
+        {% if campo == 'descrizione' %}
+          <textarea class="form-control" name="{{ campo }}" id="{{ campo }}" required>{{ valori[campo] }}</textarea>
+        {% else %}
+          <input class="form-control" name="{{ campo }}" id="{{ campo }}" value="{{ valori[campo] }}" required
+            type="{{ 'number' if campo == 'posti' else 'text' }}"
+            {% if campo == 'posti' %}min="1" max="2147483647" step="1"{% else %}maxlength="{{ 10 if campo == 'id_lab' else 255 }}"{% endif %}
+            {% if modifica and campo == 'id_lab' %}readonly{% endif %}>
+        {% endif %}
+      </div>
+    {% endfor %}
+    <button class="btn btn-success" type="submit">Salva laboratorio</button>
+    <a class="btn btn-outline-secondary" href="{{ url_for('gestione_dati') }}">Annulla</a>
+  </form>
+</main>
+{% endblock %}

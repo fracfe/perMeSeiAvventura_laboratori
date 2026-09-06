@@ -248,7 +248,10 @@ class GestioneDatiTestCase(unittest.TestCase):
 
         pagina_partecipanti = self.client.get("/import_iscritti")
         pagina_laboratori = self.client.get("/import_laboratori")
-        self.assertIn(b"Ultimo import:</strong> mai", pagina_partecipanti.data)
+        self.assertRegex(
+            pagina_partecipanti.data,
+            rb"Ultimo import:</strong> <span[^>]*>mai</span>",
+        )
         self.assertIn(b"20/08/2026 13:00", pagina_laboratori.data)
 
     def test_reset_laboratori_cancella_solo_laboratori_e_timestamp(self):

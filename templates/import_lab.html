@@ -4,6 +4,8 @@
 
 <div class="m-5" x-data="excelUploader()">
 
+    <p>Import incrementale: i laboratori esistenti vengono aggiornati per codice e fascia.
+        Quelli assenti dal file e le iscrizioni già registrate vengono conservati.</p>
     <p><strong>Ultimo import:</strong> {{ ultimo_import }}</p>
 
     <input
@@ -156,6 +158,7 @@ function excelUploader() {
             const indiceDescrizione = intestazioni.indexOf('descrizione');
             const indicePosti = intestazioni.indexOf('posti');
             const laboratori = [];
+            const codiciVisti = new Set();
 
             for (let indice = 1; indice < righe.length; indice += 1) {
                 const riga = righe[indice];
@@ -177,6 +180,10 @@ function excelUploader() {
                 } else if (id.length > 10) {
                     erroriRiga.push('codice laboratorio oltre 10 caratteri');
                 }
+                if (codiciVisti.has(id)) {
+                    erroriRiga.push('codice laboratorio duplicato nello stesso foglio');
+                }
+                codiciVisti.add(id);
                 if (typeof titolo !== 'string' || !titolo.trim()) {
                     erroriRiga.push('titolo mancante');
                 } else if (titolo.trim().length > 255) {
@@ -287,7 +294,7 @@ function excelUploader() {
                     throw new Error(data.errore || 'Errore durante l\'upload.');
                 }
 
-                alert('Upload completato');
+                alert(`Import completato: ${data.inseriti} nuovi, ${data.aggiornati} aggiornati, ${data.totale} laboratori elaborati.`);
                 window.location.reload();
             } catch (err) {
                 console.error(err);

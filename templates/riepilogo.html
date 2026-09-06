@@ -35,6 +35,11 @@
     <p class="text-body-secondary mb-1">Partecipante</p>
     <h1 class="h3">{{ partecipante.nome }} {{ partecipante.cognome }}</h1>
 
+    {% if not partecipante.deve_iscriversi_sabato %}
+      <div class="alert alert-info mt-3" role="status">
+        Iscrizione ai laboratori del sabato: non richiesta
+      </div>
+    {% else %}
     {% if completa %}
       <div class="alert alert-success mt-3" role="status">
         <h2 class="h4">Hai completato l'iscrizione ai laboratori</h2>
@@ -85,8 +90,23 @@
       </div>
     </section>
 
+    {% endif %}
+
+    <section class="card shadow-sm mb-3" aria-labelledby="domenica">
+      <div class="card-body">
+        <h2 class="h4" id="domenica">Domenica</h2>
+        {% if not partecipante.includi_domenica %}
+          <p class="mb-0">Partecipazione ai gruppi della domenica: non richiesta</p>
+        {% elif partecipante.gruppo_domenica is none %}
+          <p class="mb-0">Gruppo domenica: non ancora assegnato</p>
+        {% else %}
+          <p class="mb-0">Gruppo domenica: {{ nomi_gruppi_domenica[partecipante.gruppo_domenica] }}</p>
+        {% endif %}
+      </div>
+    </section>
+
     <div class="d-grid gap-2 d-sm-flex">
-      {% if iscrizioni_aperte and not completa %}
+      {% if partecipante.deve_iscriversi_sabato and iscrizioni_aperte and not completa %}
         <a class="btn btn-success" href="{{ url_for("percorso_iscrizione") }}">Continua l'iscrizione</a>
       {% endif %}
       <a class="btn btn-outline-secondary" href="{{ url_for("index") }}">Torna alla homepage</a>

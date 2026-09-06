@@ -150,11 +150,18 @@ class FlussoIscrizioniTestCase(unittest.TestCase):
             data={"username": "admin", "passwd": password},
         )
 
+    def completa_payload_partecipanti(self, righe):
+        return [dict(
+            gruppo=None, zona=None, regione=None, email=None, sesso=None,
+            foca=None, ruolo=None, incarico_altro=None,
+            deve_iscriversi_sabato="Sì", includi_domenica="No", **riga,
+        ) for riga in righe]
+
     def payload_partecipanti(self):
-        return [
+        return self.completa_payload_partecipanti([
             {"id": 101, "nome": "Mario", "cognome": "Rossi"},
             {"id": 202, "nome": "Anna", "cognome": "Bianchi"},
-        ]
+        ])
 
     def payload_laboratori(self):
         return {
@@ -727,7 +734,7 @@ class FlussoIscrizioniTestCase(unittest.TestCase):
         riga_vuota = next(riga for riga in righe if riga["codice"] == "512")
         self.assertEqual(riga_vuota["stato"], "non_iniziato")
 
-    def test_reimport_laboratori_bloccato_se_esistono_iscrizioni(self):
+    def test_reimport_laboratori_consentito_se_esistono_iscrizioni(self):
         self.crea_laboratori()
         self.crea_partecipante()
         self.crea_iscrizione(mattino=1, pomeriggio=None)
@@ -738,9 +745,9 @@ class FlussoIscrizioniTestCase(unittest.TestCase):
             json=self.payload_laboratori(),
         )
 
-        self.assertEqual(risposta.status_code, 409)
-        self.assertIn("esistono già", risposta.get_json()["errore"])
-        self.assertEqual(Laboratorio.query.count(), 4)
+        self.assertEqual(risposta.status_code, 200)
+        self.assertEqual(Laboratorio.query.count(), 6)
+        self.assertEqual(Iscrizione.query.one().scelta_mattino, 1)
 
     def test_import_partecipanti_rifiuta_payload_e_campi_non_validi(self):
         self.login_admin()
@@ -829,6 +836,8 @@ class FlussoIscrizioniTestCase(unittest.TestCase):
 
         for nome_caso, payload, messaggio in casi_non_validi:
             with self.subTest(caso=nome_caso):
+                if isinstance(payload, list) and all(isinstance(riga, dict) for riga in payload):
+                    payload = self.completa_payload_partecipanti(payload)
                 risposta = self.client.post("/import_iscritti", json=payload)
                 self.assertEqual(risposta.status_code, 400)
                 self.assertFalse(risposta.get_json()["ok"])
@@ -852,11 +861,11 @@ class FlussoIscrizioniTestCase(unittest.TestCase):
 
         risposta = self.client.post(
             "/import_iscritti",
-            json=[
+            json=self.completa_payload_partecipanti([
                 {"id": 101, "nome": "Valido", "cognome": "Uno"},
                 {"id": 202, "nome": "", "cognome": "Non valido"},
                 {"id": 303, "nome": "Valido", "cognome": "Tre"},
-            ],
+            ]),
         )
 
         self.assertEqual(risposta.status_code, 400)
@@ -866,21 +875,21 @@ class FlussoIscrizioniTestCase(unittest.TestCase):
             valore_timestamp,
         )
 
-    def test_import_partecipanti_valido_aggiorna_timestamp_e_non_sovrascrive(self):
+    def test_import_partecipanti_valido_aggiorna_timestamp_e_anagrafica(self):
         self.crea_partecipante(101, "Nome esistente", "Cognome esistente")
         self.login_admin()
 
         risposta = self.client.post(
             "/import_iscritti",
-            json=[
+            json=self.completa_payload_partecipanti([
                 {"id": 101, "nome": "Nome nuovo", "cognome": "Cognome nuovo"},
                 {"id": 202, "nome": "  Anna ", "cognome": " Bianchi  "},
-            ],
+            ]),
         )
 
         self.assertEqual(risposta.status_code, 200)
         self.assertEqual(Partecipante.query.count(), 2)
-        self.assertEqual(db.session.get(Partecipante, 101).nome, "Nome esistente")
+        self.assertEqual(db.session.get(Partecipante, 101).nome, "Nome nuovo")
         self.assertEqual(db.session.get(Partecipante, 202).nome, "Anna")
         self.assertEqual(db.session.get(Partecipante, 202).cognome, "Bianchi")
         self.assertIsNotNone(
@@ -892,7 +901,7 @@ class FlussoIscrizioniTestCase(unittest.TestCase):
 
         risposta = self.client.post(
             "/import_iscritti",
-            json=[
+            json=self.completa_payload_partecipanti([
                 {
                     "id": 303,
                     "nome": "Mario",
@@ -901,7 +910,7 @@ class FlussoIscrizioniTestCase(unittest.TestCase):
                     "Cell": "+390000000000",
                     "Gruppo": "Dato non necessario",
                 }
-            ],
+            ]),
         )
 
         self.assertEqual(risposta.status_code, 200)
@@ -912,8 +921,8 @@ class FlussoIscrizioniTestCase(unittest.TestCase):
         self.assertFalse(hasattr(partecipante, "Cell"))
         self.assertFalse(hasattr(partecipante, "Gruppo"))
         self.assertEqual(
-            set(Partecipante.__table__.columns.keys()),
-            {"id", "nome", "cognome"},
+            (partecipante.email, partecipante.gruppo),
+            (None, None),
         )
 
     def test_import_partecipanti_errore_database_esegue_rollback(self):
@@ -1025,7 +1034,7 @@ class FlussoIscrizioniTestCase(unittest.TestCase):
             valore_timestamp,
         )
 
-    def test_import_laboratori_valido_sostituisce_dati_e_aggiorna_timestamp(self):
+    def test_import_laboratori_valido_aggiunge_dati_e_aggiorna_timestamp(self):
         self.crea_laboratori()
         self.login_admin()
 
@@ -1035,8 +1044,8 @@ class FlussoIscrizioniTestCase(unittest.TestCase):
         )
 
         self.assertEqual(risposta.status_code, 200)
-        self.assertEqual(Laboratorio.query.count(), 2)
-        self.assertIsNone(Laboratorio.query.filter_by(id_lab="M01").first())
+        self.assertEqual(Laboratorio.query.count(), 6)
+        self.assertIsNotNone(Laboratorio.query.filter_by(id_lab="M01").first())
         self.assertEqual(
             Laboratorio.query.filter_by(id_lab="NM01").one().tipologia,
             "mattino",
@@ -1081,117 +1090,29 @@ class FlussoIscrizioniTestCase(unittest.TestCase):
             valore_timestamp,
         )
 
-    def test_template_import_mostrano_validazione_e_messaggi_backend(self):
+    def test_template_import_laboratori_mantiene_validazione_e_messaggi(self):
         self.login_admin()
-
-        pagina_partecipanti = self.client.get("/import_iscritti")
-        pagina_laboratori = self.client.get("/import_laboratori")
-
-        for pagina in (pagina_partecipanti, pagina_laboratori):
-            self.assertEqual(pagina.status_code, 200)
-            self.assertIn(b"righeNonValide", pagina.data)
-            self.assertIn(b"data.errore", pagina.data)
-            self.assertIn(b"data.ok !== true", pagina.data)
-            self.assertIn(b"response.redirected", pagina.data)
-            self.assertIn(b"puoCaricare", pagina.data)
-            self.assertIn(b"blankrows: true", pagina.data)
-            self.assertNotIn(b"console.log", pagina.data)
-        self.assertIn(b"colonneRichieste", pagina_partecipanti.data)
-        self.assertIn(b"EventLeadsOfAge", pagina_partecipanti.data)
-        self.assertNotIn(b"totali", pagina_partecipanti.data)
-        self.assertIn(b"fogliMancanti", pagina_laboratori.data)
-        self.assertIn(b"pomeriggio", pagina_laboratori.data)
-
-    def test_template_import_partecipanti_supporta_formato_excel_bc(self):
-        self.login_admin()
-
-        pagina = self.client.get("/import_iscritti")
-
+        pagina = self.client.get("/import_laboratori")
         self.assertEqual(pagina.status_code, 200)
-        self.assertIn(b"workbook.Sheets[nomeFoglio]", pagina.data)
-        self.assertIn(b"const nomeFoglio = 'EventLeadsOfAge'", pagina.data)
-        self.assertNotIn(b"totali", pagina.data)
-        self.assertIn(b"const numeroRigaIntestazioni = 6", pagina.data)
-        self.assertIn(
-            b"const indiceRigaIntestazioni = numeroRigaIntestazioni - 1",
-            pagina.data,
-        )
-        self.assertIn(b"righe[indiceRigaIntestazioni]", pagina.data)
-        self.assertIn(b"indiceRigaIntestazioni + 1", pagina.data)
-        self.assertIn(b"blankrows: true", pagina.data)
-        self.assertIn(b"range: 0", pagina.data)
-        self.assertIn(b"['Codice', 'Nome', 'Cognome']", pagina.data)
-        self.assertIn(b"intestazioni.indexOf('Codice')", pagina.data)
-        self.assertIn(b"intestazioni.indexOf('Nome')", pagina.data)
-        self.assertIn(b"intestazioni.indexOf('Cognome')", pagina.data)
-        self.assertIn(b"valoriPartecipante.every", pagina.data)
-        self.assertIn(b"valore === undefined", pagina.data)
-        self.assertIn(b"if (rigaSenzaDatiPartecipante)", pagina.data)
-        self.assertIn(b"this.righeNonValide += 1", pagina.data)
-        self.assertIn(b"Riga Excel ${indice + 1}", pagina.data)
-        self.assertIn(b"id: codice", pagina.data)
-        self.assertIn(b"nome: nome.trim()", pagina.data)
-        self.assertIn(b"cognome: cognome.trim()", pagina.data)
-        self.assertIn(
-            b'Il file non contiene il foglio "EventLeadsOfAge".',
-            pagina.data,
-        )
-        self.assertIn(b"mancano le colonne", pagina.data)
-        self.assertIn(
-            b"Il file non contiene partecipanti da importare.",
-            pagina.data,
-        )
+        for testo in (b"righeNonValide", b"data.errore", b"data.ok !== true",
+                      b"response.redirected", b"puoCaricare", b"blankrows: true",
+                      b"fogliMancanti", b"pomeriggio"):
+            self.assertIn(testo, pagina.data)
 
-    def test_template_import_partecipanti_minimizza_dati_personali(self):
+    def test_template_import_partecipanti_csv_con_anteprima(self):
         self.login_admin()
-
         pagina = self.client.get("/import_iscritti")
-
         self.assertEqual(pagina.status_code, 200)
-        self.assertIn(b"file.arrayBuffer()", pagina.data)
-        self.assertIn(
-            b"""const payload = this.rows.map(row => ({
-                    id: row.id,
-                    nome: row.nome,
-                    cognome: row.cognome
-                }));""",
-            pagina.data,
-        )
-        self.assertIn(b"body: JSON.stringify(payload)", pagina.data)
-        self.assertIn(b"'Content-Type': 'application/json'", pagina.data)
-        self.assertNotIn(b"body: JSON.stringify(this.rows)", pagina.data)
-        self.assertNotIn(b"FormData", pagina.data)
-        self.assertNotIn(b"multipart/form-data", pagina.data)
-        self.assertNotIn(b"this.workbook", pagina.data)
-        self.assertNotIn(b"this.righe =", pagina.data)
-        self.assertNotIn(b"localStorage", pagina.data)
-        self.assertNotIn(b"sessionStorage", pagina.data)
-        self.assertNotIn(b"console.", pagina.data)
-        self.assertIn(b"event.target.value = ''", pagina.data)
-
-        self.assertEqual(pagina.data.count(b'<th scope="col">'), 3)
-        for intestazione in ("Codice Socio", "Nome", "Cognome"):
-            self.assertIn(
-                f'<th scope="col">{intestazione}</th>'.encode(),
-                pagina.data,
-            )
-        for colonna_non_necessaria in (
-            "SubID",
-            "PIC",
-            "Gruppo",
-            "Città",
-            "PR",
-            "Regione",
-            "Status",
-            "Email",
-            "Cell",
-            "Email Capo",
-            "Cell Capo",
-        ):
-            self.assertNotIn(
-                f'<th scope="col">{colonna_non_necessaria}</th>'.encode(),
-                pagina.data,
-            )
+        self.assertIn(b'accept=".csv"', pagina.data)
+        self.assertIn(b"import_iscritti.js", pagina.data)
+        self.assertIn(b"Anteprima validata", pagina.data)
+        self.assertNotIn(b"EventLeadsOfAge", pagina.data)
+        self.assertEqual(pagina.data.count(b'<th scope="col">'), 9)
+        for colonna in ("Codice", "Nome", "Cognome", "Gruppo", "Zona", "Regione",
+                        "Email", "Sabato", "Domenica"):
+            self.assertIn(f'<th scope="col">{colonna}</th>'.encode(), pagina.data)
+        for colonna in ("EmailReferente", "DataNascita", "PIC", "CAP"):
+            self.assertNotIn(colonna.encode(), pagina.data)
 
     def test_utente_temporaneo_viene_reindirizzato_alla_home_dagli_import(self):
         self.crea_partecipante()

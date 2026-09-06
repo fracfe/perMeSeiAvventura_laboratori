@@ -392,15 +392,11 @@ class EndpointSuddivisioneTestCase(unittest.TestCase):
         pagina = self.client.get("/admin/suddivisione-gruppi")
         self.assertEqual(pagina.status_code, 200)
         self.assertIn(b"Suddivisione gruppi", pagina.data)
-        self.assertIn(b"Genera suddivisione", pagina.data)
-        self.assertIn(b"Sto generando i gruppi", pagina.data)
-        self.assertNotIn(b"Torna alle iscrizioni", pagina.data)
+        self.assertIn(b"Ricalcola gruppi domenica", pagina.data)
+        self.assertNotIn(b'type="file"', pagina.data)
+        self.assertNotIn(b'numero_laboratori', pagina.data)
         self.assertIn(b'href="/admin/iscrizioni"', pagina.data)
         self.assertIn(b'aria-current="page"', pagina.data)
-        self.assertIn(b'x-if="validazione"', pagina.data)
-        self.assertIn(b'x-if="elaborazione"', pagina.data)
-        self.assertNotIn(b'x-show="validazione"', pagina.data)
-        self.assertNotIn(b'x-show="elaborazione"', pagina.data)
 
         validazione = self.client.post(
             "/admin/suddivisione-gruppi/valida",

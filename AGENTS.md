@@ -146,11 +146,9 @@ I codici censimento utilizzati nel progetto sono:
 * sequenziali;
 * senza zeri iniziali significativi.
 
-Per ogni partecipante vengono conservati esclusivamente:
-
-* codice censimento;
-* nome;
-* cognome.
+Il partecipante conserva codice censimento, nome, cognome e i campi anagrafici
+esplicitamente previsti dall'import CSV descritto sotto. Il gruppo domenicale
+è persistito separatamente dai dati aggiornabili dal CSV.
 
 ---
 
@@ -629,6 +627,29 @@ Non creare funzionalità amministrative ulteriori salvo richiesta esplicita.
 
 ---
 
+# Gestione manuale essenziale
+
+L'admin può creare e modificare partecipanti dalla gestione iscrizioni, usando
+form dedicati e le stesse validazioni dell'import CSV. Il codice censimento
+è immutabile in modifica, anche per richieste POST manipolate. I due flag
+richiedono una scelta esplicita; le creazioni non producono iscrizioni o gruppi.
+
+Gestione dati mostra i laboratori e i link ai form di aggiunta/modifica.
+Codice e fascia non sono modificabili; per una nuova coppia già presente la
+creazione viene rifiutata. Titolo, descrizione e posti sono validati come
+nell'import. Il numero di iscritti viene verificato sotto lock del laboratorio
+prima di salvare la capienza. Nessun nuovo vincolo UNIQUE.
+
+Il reset singolo è POST e protetto da admin_required, con conferma JavaScript
+nella gestione iscrizioni. Elimina esclusivamente la riga Iscrizione: comprende
+scelte, rinunce e A/B, preservando tutti i dati del Partecipante e la domenica.
+Bloccare prima il partecipante, poi i laboratori in ordine di ID, coerentemente
+con il salvataggio delle scelte. Gli errori DB richiedono rollback completo.
+Non introdurre eliminazioni individuali di partecipanti/laboratori né modificare
+i timestamp degli import con questi form.
+
+---
+
 # Dashboard iscrizioni
 
 La pagina di gestione iscrizioni mostra almeno:
@@ -696,123 +717,71 @@ La validazione client-side non sostituisce quella server-side.
 
 ---
 
-# Import partecipanti BC
+# Import partecipanti CSV
 
-L'import partecipanti utilizza il file Excel reale esportato dal sistema BC.
+L'import partecipanti accetta esclusivamente CSV UTF-8 separati da `;`, con
+intestazioni nella prima riga. Il vecchio Excel BC non è più supportato.
+La lettura avviene nel browser con SheetJS 0.18.5 già caricato dall'admin:
+non usare un parser basato su `split(';')`.
 
-## Formato previsto
+Le intestazioni dei 13 campi da importare sono tutte obbligatorie, anche quando
+il valore è facoltativo. Le colonne possono essere riordinate. Sono supportati
+BOM UTF-8, accenti, campi quotati, delimitatori e newline nei campi quotati,
+terminazioni Windows/Linux. Le righe completamente vuote sono ignorate.
 
-Foglio:
+| Intestazione CSV | Campo Partecipante |
+|---|---|
+| Codice | id |
+| Nome | nome |
+| Cognome | cognome |
+| Gruppo | gruppo |
+| Zona | zona |
+| Regione | regione |
+| EmailContatto | email |
+| Sesso | sesso |
+| FoCa | foca |
+| Partecipo in qualità di: | ruolo |
+| Se hai indicato "altro" specifica incarico: | incarico_altro |
+| Partecipa ai laboratori di sabato come partecipante | deve_iscriversi_sabato |
+| Partecipa ai laboratori di domenica come partecipante | includi_domenica |
 
-`EventLeadsOfAge`
+## Privacy e minimizzazione dei dati
 
-Le intestazioni effettive sono alla riga Excel 6.
+Il CSV originale resta nel browser. Solo i campi della tabella vengono inviati
+come JSON al backend. `BC`, `PIC`, `DataNascita`, `CAP`, `Città`, `PR`,
+`EmailReferente` e qualsiasi altra colonna sono ignorati: non devono essere
+persistiti, mostrati in anteprima, loggati o inviati al server.
+L'email persistente proviene esclusivamente da `EmailContatto`.
+Non conservare il file originale o i suoi dati in localStorage/sessionStorage.
 
-Tra le colonne presenti ci sono:
+## Validazione e anteprima
 
-* SubID
-* PIC
-* Codice
-* Nome
-* Cognome
-* Gruppo
-* Città
-* PR
-* Regione
-* Status
-* Email
-* Cell
-* Email Capo
-* Cell Capo
+La pagina legge il file e invia il payload minimo a
+`POST /import_iscritti/valida`, protetta per l'admin e senza scritture.
+Solo dopo la validazione mostra l'anteprima. `POST /import_iscritti` ripete
+la stessa validazione prima di importare.
 
-Per questa applicazione servono esclusivamente:
+Controllare codice intero positivo fino a 2147483647, codici duplicati,
+nome/cognome obbligatori, tipi e lunghezze compatibili col DB e presenza dei
+campi previsti. I testi facoltativi vuoti diventano NULL, anche in aggiornamento.
 
-* `Codice`
-* `Nome`
-* `Cognome`
+I flag sono obbligatori. Dopo trim e confronto senza distinzione tra maiuscole
+e minuscole: `Sì`, `Si`, `S`, `Yes`, `True`, `1` sono true;
+`No`, `N`, `False`, `0` sono false. Vuoti o sconosciuti bloccano l'import.
+Il payload normalizzato dell'anteprima usa boolean JSON, accettati dal backend.
 
-Le altre colonne devono essere ignorate.
+## Import incrementale
 
-La lettura deve preferibilmente avvenire riconoscendo le intestazioni e non assumendo rigidamente la posizione delle colonne.
+Codice nuovo: inserimento. Codice già presente: aggiornamento di tutti e soli
+i campi CSV. Persona assente dal file: nessuna modifica e nessuna cancellazione.
+Non modificare iscrizioni sabato, rinunce, timestamp delle iscrizioni,
+sottogruppi A/B o gruppo domenicale. Anche il passaggio del flag domenica a
+false deve conservare un gruppo già assegnato fino al futuro ricalcolo.
 
----
-
-# Privacy e minimizzazione dei dati
-
-Questa è una regola progettuale importante.
-
-Il file Excel BC contiene informazioni personali che non sono necessarie all'applicazione.
-
-Il file completo deve essere letto **esclusivamente nel browser dell'amministratore tramite SheetJS**.
-
-Il file Excel originale NON deve essere caricato sul server.
-
-Il JavaScript deve estrarre esclusivamente:
-
-* codice censimento;
-* nome;
-* cognome.
-
-Il payload inviato al backend deve contenere esclusivamente:
-
-* `id`
-* `nome`
-* `cognome`
-
-Non devono essere inviati al server dati come:
-
-* email;
-* telefono;
-* gruppo;
-* città;
-* provincia;
-* regione;
-* status;
-* dati di contatto dei capi;
-* altri campi presenti nel file BC ma non necessari.
-
-Questi dati non devono essere:
-
-* persistiti;
-* loggati;
-* mostrati in console;
-* inviati via rete;
-* mostrati nell'anteprima.
-
-L'anteprima deve mostrare soltanto:
-
-* codice;
-* nome;
-* cognome.
-
-Non introdurre upload server-side del file Excel originale.
-
----
-
-# Validazione import partecipanti
-
-Frontend e backend devono validare i dati.
-
-Verificare almeno:
-
-* foglio corretto;
-* intestazioni richieste;
-* presenza di partecipanti;
-* codice censimento intero positivo;
-* nome non vuoto;
-* cognome non vuoto;
-* lunghezze compatibili;
-* codici duplicati nello stesso file.
-
-Le righe completamente vuote devono essere ignorate.
-
-Le righe parzialmente compilate devono essere segnalate.
-
-Se il file è invalido:
-
-* non consentire l'import;
-* mostrare messaggi chiari;
-* non effettuare import parziali.
+Validare l'intero payload prima di scrivere. Scritture e timestamp ultimo import
+appartengono alla stessa transazione; qualsiasi errore DB richiede rollback.
+Mostrare inseriti, aggiornati e totale elaborato dopo il commit.
+Gli aggiornati contano i codici già presenti, anche se i valori sono identici.
 
 ---
 
@@ -834,7 +803,9 @@ Entrambe le fasce devono contenere almeno un laboratorio valido.
 
 La capienza deve essere un intero positivo.
 
-Il backend deve validare completamente il payload prima di cancellare o sostituire i laboratori esistenti.
+Il backend deve validare completamente entrambi i fogli prima di inserire o aggiornare laboratori.
+I codici duplicati nello stesso foglio, dopo trim, bloccano l’import; lo stesso
+codice è consentito una volta in ciascuna fascia.
 
 Un payload invalido non deve modificare il database.
 
@@ -842,11 +813,22 @@ Un payload invalido non deve modificare il database.
 
 # Reimport laboratori
 
-Se esistono già iscrizioni, il reimport dei laboratori deve essere rifiutato.
+Il reimport è incrementale e consentito anche in presenza di iscrizioni.
+La chiave di riconciliazione è `(tipologia, id_lab)`: zero corrispondenze nel DB
+inseriscono un nuovo laboratorio; una aggiorna titolo, descrizione e posti,
+preservando la primary key; più corrispondenze bloccano l’intero import.
+Non aggiungere per ora un UNIQUE: alcune fixture contengono duplicati intenzionali.
+I laboratori assenti dal file restano invariati, compresi eventuali duplicati.
 
-Non tentare sincronizzazioni complesse.
+Prima di scrivere, verificare anche tutte le riduzioni di capienza:
+il nuovo valore deve essere almeno pari alle scelte effettive nella fascia
+corrispondente. Le rinunce non occupano posti. Gli aumenti sono consentiti.
+Acquisire i lock dei laboratori in ordine di ID prima di contare, mantenendoli
+fino al commit/rollback. Non modificare iscrizioni, rinunce, timestamp o gruppi.
+Mostrare nuovi inseriti, aggiornati e totale soltanto dopo il commit.
 
-Mostrare un messaggio chiaro all'amministratore.
+Senza UNIQUE, i lock sulle righe esistenti non garantiscono l’unicità di nuove
+coppie create da import amministrativi simultanei: eseguire gli import uno alla volta.
 
 ---
 

@@ -14,8 +14,8 @@
         <div class="card-body d-flex flex-column">
           <h2 class="h4" id="titolo-export-elenco">Esporta elenco iscrizioni</h2>
           <p class="card-text flex-grow-1">
-            Un unico foglio con una riga per ogni partecipante che ha effettuato
-            almeno una scelta, con i laboratori del mattino e del pomeriggio.
+            Un unico foglio con tutti i partecipanti, i dati anagrafici, lo stato delle
+            iscrizioni del sabato e le assegnazioni A/B salvate.
           </p>
           <a class="btn btn-primary btn-lg" href="{{ url_for("scarica_elenco_iscrizioni") }}">
             Scarica elenco iscrizioni
@@ -29,8 +29,8 @@
         <div class="card-body d-flex flex-column">
           <h2 class="h4" id="titolo-export-laboratori">Esporta per laboratorio</h2>
           <p class="card-text flex-grow-1">
-            Un foglio separato per ogni laboratorio del mattino e del pomeriggio,
-            con l'elenco dei partecipanti assegnati.
+            Un foglio generale con tutti i partecipanti, un foglio per ogni laboratorio
+            con le assegnazioni A/B e i due elenchi di chi non partecipa.
           </p>
           <a class="btn btn-primary btn-lg" href="{{ url_for("scarica_iscrizioni_per_laboratorio") }}">
             Scarica export per laboratorio
