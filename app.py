@@ -1509,12 +1509,6 @@ def nome_foglio_laboratorio(laboratorio, nomi_usati):
     )
 
 
-@app.route("/admin/iscrizioni/esporta")
-@admin_required()
-def esporta_iscrizioni():
-    return render_template("esporta_iscrizioni.html")
-
-
 def dati_export_iscrizioni():
     return (db.session.query(Partecipante, Iscrizione)
             .outerjoin(Iscrizione, Iscrizione.partecipante == Partecipante.id)
@@ -1533,31 +1527,13 @@ def celle_export_fascia(partecipante, iscrizione, fascia, laboratori):
             getattr(iscrizione, f"sottogruppo_{fascia}") or "Non assegnato")
 
 
-def compila_foglio_partecipanti(foglio, partecipanti, laboratori):
-    foglio.append([
-        "Codice censimento", "Nome", "Cognome", "Gruppo", "Zona", "Regione", "Email",
-        "Laboratorio mattino", "Gruppo A/B mattino",
-        "Laboratorio pomeriggio", "Gruppo A/B pomeriggio",
-    ])
-    for partecipante, iscrizione in partecipanti:
-        foglio.append([
-            partecipante.id, partecipante.nome, partecipante.cognome,
-            partecipante.gruppo, partecipante.zona, partecipante.regione, partecipante.email,
-            *celle_export_fascia(partecipante, iscrizione, "mattino", laboratori),
-            *celle_export_fascia(partecipante, iscrizione, "pomeriggio", laboratori),
-        ])
-    formatta_foglio_excel(foglio, (20, 24, 24, 24, 24, 24, 36, 42, 22, 42, 24))
-
-
-@app.route("/admin/iscrizioni/esporta/elenco")
-@admin_required()
-def scarica_elenco_iscrizioni():
-    workbook = Workbook()
-    foglio = workbook.active
-    foglio.title = "Iscrizioni"
-    compila_foglio_partecipanti(foglio, dati_export_iscrizioni(),
-                              {lab.id: lab for lab in Laboratorio.query.all()})
-    return invia_file_excel(workbook, "iscrizioni_generali")
+def compila_foglio_anagrafica(foglio, partecipanti, colonne_extra=(), valori_extra=None):
+    foglio.append(["Codice censimento", "Nome", "Cognome", "Gruppo", "Zona", "Regione", "FoCa", "Email"] + list(colonne_extra))
+    for persona in partecipanti:
+        foglio.append([persona.id, persona.nome, persona.cognome, persona.gruppo,
+                       persona.zona, persona.regione, persona.foca, persona.email]
+                      + (list(valori_extra(persona)) if valori_extra else []))
+    formatta_foglio_excel(foglio, (20, 24, 24, 24, 24, 24, 24, 36) + (32,) * len(colonne_extra))
 
 
 @app.route("/admin/iscrizioni/esporta/laboratori")
@@ -1570,37 +1546,45 @@ def scarica_iscrizioni_per_laboratorio():
     iscritti_per_laboratorio = {}
     non_partecipanti = {"mattino": [], "pomeriggio": []}
     for partecipante, iscrizione in partecipanti:
-        if iscrizione is None:
+        if iscrizione is None or not partecipante.deve_iscriversi_sabato:
             continue
         for fascia in ("mattino", "pomeriggio"):
             if getattr(iscrizione, f"non_partecipa_{fascia}"):
-                if partecipante.deve_iscriversi_sabato:
-                    non_partecipanti[fascia].append(partecipante)
+                non_partecipanti[fascia].append(partecipante)
             else:
                 laboratorio_id = getattr(iscrizione, f"scelta_{fascia}")
                 if laboratorio_id is not None:
                     iscritti_per_laboratorio.setdefault((fascia, laboratorio_id), []).append(
-                        (partecipante, getattr(iscrizione, f"sottogruppo_{fascia}") or "Non assegnato")
+                        partecipante
                     )
 
     workbook = Workbook()
     foglio = workbook.active
     foglio.title = "Tutti i partecipanti"
-    compila_foglio_partecipanti(foglio, partecipanti, {lab.id: lab for lab in laboratori})
+    iscrizioni = {p.id: i for p, i in partecipanti}
+    laboratori_per_id = {lab.id: lab for lab in laboratori}
+
+    def situazione_sabato(persona):
+        valori = []
+        for fascia in ("mattino", "pomeriggio"):
+            stato, ab = celle_export_fascia(persona, iscrizioni[persona.id], fascia, laboratori_per_id)
+            # Negli elenchi sabato esportare solo A/B assegnati; le altre celle restano vuote.
+            valori.extend((stato, ab if ab in ("A", "B") else None))
+        return valori
+
+    compila_foglio_anagrafica(foglio, (p for p, _ in partecipanti),
+                             ("Laboratorio mattino", "Gruppo A/B mattino",
+                              "Laboratorio pomeriggio", "Gruppo A/B pomeriggio"), situazione_sabato)
     nomi_usati = {foglio.title.casefold()}
     for laboratorio in laboratori:
         foglio = workbook.create_sheet(nome_foglio_laboratorio(laboratorio, nomi_usati))
-        foglio.append(["Codice censimento", "Nome", "Cognome", "Gruppo"])
-        for partecipante, gruppo in iscritti_per_laboratorio.get((laboratorio.tipologia, laboratorio.id), []):
-            foglio.append([partecipante.id, partecipante.nome, partecipante.cognome, gruppo or "Non assegnato"])
-        formatta_foglio_excel(foglio, (20, 24, 24, 12))
+        compila_foglio_anagrafica(foglio, iscritti_per_laboratorio.get((laboratorio.tipologia, laboratorio.id), []),
+                                 ("Gruppo A/B",),
+                                 lambda p: (getattr(iscrizioni[p.id], f"sottogruppo_{laboratorio.tipologia}"),))
 
     for tipologia, nome_foglio in (("mattino", "M - Non partecipa"), ("pomeriggio", "P - Non partecipa")):
         foglio = workbook.create_sheet(nome_foglio_univoco(nome_foglio, nomi_usati))
-        foglio.append(["Codice censimento", "Nome", "Cognome"])
-        for partecipante in non_partecipanti[tipologia]:
-            foglio.append([partecipante.id, partecipante.nome, partecipante.cognome])
-        formatta_foglio_excel(foglio, (20, 24, 24))
+        compila_foglio_anagrafica(foglio, non_partecipanti[tipologia])
     return invia_file_excel(workbook, "iscrizioni_per_laboratorio")
 
 
@@ -1655,6 +1639,22 @@ def pagina_suddivisione_domenica():
         riepilogo=leggi_distribuzione_domenica(),
         ultimo_ricalcolo=get_ultimo_import(ULTIMO_RICALCOLO_DOMENICA_KEY),
     )
+
+
+@app.route("/admin/suddivisione-gruppi/esporta")
+@admin_required()
+def esporta_gruppi_domenica():
+    partecipanti = (Partecipante.query.filter(Partecipante.includi_domenica.is_(True))
+                    .order_by(Partecipante.cognome, Partecipante.nome, Partecipante.id).all())
+    workbook = Workbook()
+    generale = workbook.active
+    generale.title = "Tutti i partecipanti"
+    compila_foglio_anagrafica(generale, partecipanti, ("Gruppo domenica",),
+                             lambda p: (NOMI_GRUPPI_DOMENICA.get(p.gruppo_domenica, "Non assegnato"),))
+    for numero, nome in NOMI_GRUPPI_DOMENICA.items():
+        foglio = workbook.create_sheet(nome)
+        compila_foglio_anagrafica(foglio, (p for p in partecipanti if p.gruppo_domenica == numero))
+    return invia_file_excel(workbook, "gruppi_domenica")
 
 
 @app.route("/admin/suddivisione-gruppi/ricalcola", methods=["POST"])

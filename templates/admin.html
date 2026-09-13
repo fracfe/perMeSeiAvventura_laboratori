@@ -30,7 +30,7 @@
       "import_iscritti",
       "import_laboratori",
       "stato_iscrizioni",
-      "esporta_iscrizioni"
+      "scarica_iscrizioni_per_laboratorio"
     ] %}
     <nav class="container-fluid px-3 px-md-5 mb-3" aria-label="Navigazione amministrativa">
       <div class="d-flex flex-wrap gap-2 align-items-center">
@@ -65,9 +65,6 @@
             <li>
               <a class="dropdown-item{% if request.endpoint == 'stato_iscrizioni' %} active{% endif %}" href="{{ url_for('stato_iscrizioni') }}">Stato iscrizioni</a>
             </li>
-            <li>
-              <a class="dropdown-item{% if request.endpoint == 'esporta_iscrizioni' %} active{% endif %}" href="{{ url_for('esporta_iscrizioni') }}">Esporta iscrizioni</a>
-            </li>
           </ul>
         </div>
 
@@ -75,7 +72,7 @@
           class="btn {{ 'btn-primary' if request.endpoint == 'suddivisione_gruppi' else 'btn-outline-primary' }}"
           href="{{ url_for('suddivisione_gruppi') }}"
           {% if request.endpoint == "suddivisione_gruppi" %}aria-current="page"{% endif %}
-        >Suddivisione gruppi</a>
+        >Suddivisione gruppi domenica</a>
         <a
           class="btn {{ 'btn-primary' if request.endpoint == 'genera_file_comunicazioni' else 'btn-outline-primary' }}"
           href="{{ url_for('genera_file_comunicazioni') }}"
