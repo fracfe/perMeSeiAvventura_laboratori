@@ -65,6 +65,7 @@
           <p class="mb-0"><strong>Non partecipa a nessun laboratorio</strong></p>
         {% elif laboratorio_mattino %}
           <p class="mb-0"><strong>{{ laboratorio_mattino.id_lab }}</strong> — {{ laboratorio_mattino.titolo }}</p>
+          <p class="mb-0">Gruppo {{ iscrizione.sottogruppo_mattino or 'Non ancora assegnato' }}</p>
         {% else %}
           <p class="text-body-secondary mb-0">Nessun laboratorio salvato.</p>
         {% endif %}
@@ -81,6 +82,7 @@
           <p class="mb-0"><strong>Non partecipa a nessun laboratorio</strong></p>
         {% elif laboratorio_pomeriggio %}
           <p class="mb-0"><strong>{{ laboratorio_pomeriggio.id_lab }}</strong> — {{ laboratorio_pomeriggio.titolo }}</p>
+          <p class="mb-0">Gruppo {{ iscrizione.sottogruppo_pomeriggio or 'Non ancora assegnato' }}</p>
         {% else %}
           <p class="text-body-secondary mb-0">Nessun laboratorio salvato.</p>
         {% endif %}

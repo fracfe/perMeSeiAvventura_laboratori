@@ -58,6 +58,79 @@ class FlussoFlagPartecipantiTestCase(unittest.TestCase):
                 for riga in modello.query.order_by(modello.id)]
                 for modello in (Partecipante, Iscrizione, Laboratorio)}
 
+    def sezione_sabato(self, pagina, fascia):
+        fascia = "mattina" if fascia == "mattino" else fascia
+        return pagina.split(f'<h2 class="h4">Sabato {fascia}</h2>', 1)[1].split('</section>', 1)[0]
+
+    def test_riepilogo_ab_associati_alla_fascia_senza_scritture(self):
+        self.imposta(deve_iscriversi_sabato=True)
+        self.vecchia_iscrizione(completa=True)
+        self.conferma()
+        for stato in ("aperte", "chiuse"):
+            with self.subTest(stato=stato):
+                db.session.get(SysOption, "stato_iscrizioni").value = stato
+                db.session.commit()
+                prima = self.stato_db()
+                with patch("app.ricalcola_sottogruppi_ab", side_effect=AssertionError("non ricalcolare")), \
+                     patch.object(db.session, "commit", side_effect=AssertionError("non scrivere")):
+                    risposta = self.client.get("/iscrizione/riepilogo")
+                self.assertEqual(risposta.status_code, 200)
+                pagina = risposta.get_data(as_text=True)
+                mattino = self.sezione_sabato(pagina, "mattino")
+                pomeriggio = self.sezione_sabato(pagina, "pomeriggio")
+                self.assertIn("M1", mattino)
+                self.assertIn("Bosco", mattino)
+                self.assertIn("Gruppo A", mattino)
+                self.assertNotIn("Gruppo B", mattino)
+                self.assertIn("P1", pomeriggio)
+                self.assertIn("Sentieri", pomeriggio)
+                self.assertIn("Gruppo B", pomeriggio)
+                self.assertNotIn("Gruppo A", pomeriggio)
+                self.assertEqual(self.stato_db(), prima)
+
+    def test_riepilogo_ab_non_ancora_assegnato_per_ogni_fascia(self):
+        self.imposta(deve_iscriversi_sabato=True)
+        self.vecchia_iscrizione(completa=True)
+        i = db.session.get(Iscrizione, 1)
+        i.sottogruppo_mattino = i.sottogruppo_pomeriggio = None
+        db.session.commit()
+        self.conferma()
+        pagina = self.client.get("/iscrizione/riepilogo").get_data(as_text=True)
+        for fascia in ("mattino", "pomeriggio"):
+            self.assertIn("Gruppo Non ancora assegnato", self.sezione_sabato(pagina, fascia))
+
+    def test_riepilogo_ab_assente_senza_scelta_o_partecipazione(self):
+        self.imposta(deve_iscriversi_sabato=True)
+        self.vecchia_iscrizione(completa=True)
+        db.session.get(SysOption, "stato_iscrizioni").value = "chiuse"
+        db.session.commit()
+        self.conferma()
+        for fascia in ("mattino", "pomeriggio"):
+            for rinuncia in (True, False):
+                with self.subTest(fascia=fascia, rinuncia=rinuncia):
+                    i = db.session.get(Iscrizione, 1)
+                    i.scelta_mattino, i.scelta_pomeriggio = 1, 2
+                    i.non_partecipa_mattino = i.non_partecipa_pomeriggio = False
+                    setattr(i, "scelta_" + fascia, None)
+                    setattr(i, "non_partecipa_" + fascia, rinuncia)
+                    db.session.commit()
+                    pagina = self.client.get("/iscrizione/riepilogo").get_data(as_text=True)
+                    sezione = self.sezione_sabato(pagina, fascia)
+                    self.assertIn("Non partecipa" if rinuncia else "Nessun laboratorio salvato", sezione)
+                    self.assertNotIn("Gruppo", sezione)
+                    altra = "pomeriggio" if fascia == "mattino" else "mattino"
+                    self.assertIn("Gruppo", self.sezione_sabato(pagina, altra))
+        i = db.session.get(Iscrizione, 1)
+        i.scelta_mattino, i.scelta_pomeriggio = 1, 2
+        i.non_partecipa_mattino = i.non_partecipa_pomeriggio = False
+        db.session.commit()
+        self.imposta(deve_iscriversi_sabato=False)
+        pagina = self.client.get("/iscrizione/riepilogo").get_data(as_text=True)
+        self.assertIn("Iscrizione ai laboratori del sabato: non richiesta", pagina)
+        self.assertNotIn("Gruppo A", pagina)
+        self.assertNotIn("Gruppo B", pagina)
+        self.assertNotIn("Gruppo Non ancora assegnato", pagina)
+
     def test_sabato_non_richiesto_aperto_e_chiuso_senza_creazione(self):
         for stato in ("aperte", "chiuse"):
             with self.subTest(stato=stato):
