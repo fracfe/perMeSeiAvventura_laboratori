@@ -1177,6 +1177,31 @@ def reset_sabato_partecipante(partecipante_id):
     return redirect(url_for("gestione_iscrizioni"))
 
 
+@app.route("/admin/partecipanti/<int:partecipante_id>/elimina", methods=["POST"])
+@admin_required()
+def elimina_partecipante(partecipante_id):
+    try:
+        persona = Partecipante.query.filter_by(id=partecipante_id).with_for_update().first()
+        if persona is None:
+            abort(404)
+        iscrizione = get_iscrizione_partecipante(partecipante_id)
+        if iscrizione is not None:
+            laboratori_id = [id_lab for id_lab in (iscrizione.scelta_mattino, iscrizione.scelta_pomeriggio)
+                             if id_lab is not None]
+            Laboratorio.query.filter(Laboratorio.id.in_(laboratori_id)).order_by(Laboratorio.id).with_for_update().all()
+            db.session.delete(iscrizione)
+            # Senza relationship ORM, garantisce la DELETE del figlio prima del padre.
+            db.session.flush()
+        db.session.delete(persona)
+        db.session.commit()
+        flash(f"Partecipante con codice {partecipante_id} eliminato definitivamente.", "success")
+    except SQLAlchemyError:
+        db.session.rollback()
+        app.logger.exception("Errore durante l'eliminazione del partecipante")
+        flash("Non è stato possibile eliminare il partecipante. Nessuna modifica salvata.", "warning")
+    return redirect(url_for("gestione_iscrizioni"))
+
+
 def errore_richiesta_reset(conferma_attesa):
     password_attuale = request.form.get("password_attuale", "")
     if not check_password_hash(current_user.password, password_attuale):

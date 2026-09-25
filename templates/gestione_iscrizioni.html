@@ -214,6 +214,10 @@
                     <button class="btn btn-sm btn-outline-danger" type="submit">Azzera iscrizioni sabato</button>
                   </form>
                 {% endif %}
+                <form class="mt-2" method="post" action="{{ url_for('elimina_partecipante', partecipante_id=partecipante.id) }}"
+                  onsubmit="return confirm('Eliminare definitivamente il partecipante con codice {{ partecipante.id }}, comprese tutte le iscrizioni e le assegnazioni ai gruppi? Questa operazione non può essere annullata.');">
+                  <button class="btn btn-sm btn-danger" type="submit">Elimina</button>
+                </form>
               </td>
             </tr>
           {% endfor %}

@@ -2,12 +2,14 @@ import os
 import unittest
 from datetime import datetime
 from unittest.mock import patch
+from html.parser import HTMLParser
 
 os.environ["DB_TYPE"] = "sqlite"
 os.environ["DB_NAME"] = ":memory:"
 os.environ["SECRET_KEY"] = "test-secret-key"
 
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import text
 from werkzeug.security import generate_password_hash
 from app import app, db, User, Partecipante, Laboratorio, Iscrizione, SysOption
 
@@ -316,6 +318,135 @@ class AdminManualeTestCase(unittest.TestCase):
         self.assertIn(b'/admin/partecipanti/101/modifica', iscrizioni.data)
         self.assertIn(b'onsubmit="return confirm(', iscrizioni.data)
         self.assertIn(b'Azzera iscrizioni sabato', iscrizioni.data)
+
+    def test_elimina_partecipante_completo_preserva_altri_dati(self):
+        self.prepara()
+        db.session.add_all([
+            SysOption(key='ultimo_import_partecipanti', value='2026-08-20'),
+            SysOption(key='ultimo_ricalcolo_domenica', value='2026-08-21'),
+        ])
+        db.session.commit()
+        prima = {m: self.snapshot(m) for m in (Partecipante, Iscrizione, Laboratorio, User, SysOption)}
+        iscrizione_id = Iscrizione.query.filter_by(partecipante=101).one().id
+        # Verifica l'ordine delle DELETE anche con i vincoli SQLite attivi.
+        db.session.execute(text('PRAGMA foreign_keys=ON'))
+        self.assertEqual(db.session.execute(text('PRAGMA foreign_keys')).scalar(), 1)
+        try:
+            risposta = self.client.post('/admin/partecipanti/101/elimina')
+            self.assertEqual(risposta.status_code, 302)
+            self.assertTrue(risposta.location.endswith('/admin/iscrizioni'))
+            self.assertIsNone(db.session.get(Partecipante, 101))
+            self.assertIsNone(db.session.get(Iscrizione, iscrizione_id))
+            self.assertEqual(self.snapshot(Partecipante), [r for r in prima[Partecipante] if r[0] != 101])
+            self.assertEqual(self.snapshot(Iscrizione), [r for r in prima[Iscrizione] if r[0] != iscrizione_id])
+            for modello in (Laboratorio, User, SysOption):
+                self.assertEqual(self.snapshot(modello), prima[modello])
+            self.assertEqual(db.session.execute(text('PRAGMA foreign_key_check')).all(), [])
+            pagina = self.client.get(risposta.location).get_data(as_text=True)
+            self.assertIn('Partecipante con codice 101 eliminato definitivamente.', pagina)
+            self.assertNotIn('data-codice="101"', pagina)
+            self.assertIn('data-codice="202"', pagina)
+            self.assertIn('id="totale-partecipanti">1<', pagina)
+        finally:
+            db.session.rollback()
+            db.session.execute(text('PRAGMA foreign_keys=OFF'))
+            db.session.commit()
+
+    def test_elimina_partecipante_senza_iscrizione(self):
+        self.client.post('/admin/partecipanti/nuovo', data=self.persona())
+        risposta = self.client.post('/admin/partecipanti/101/elimina', follow_redirects=True)
+        self.assertEqual(risposta.status_code, 200)
+        self.assertIsNone(db.session.get(Partecipante, 101))
+        self.assertEqual(Iscrizione.query.count(), 0)
+        self.assertIn(b'eliminato definitivamente', risposta.data)
+
+    def test_form_elimina_indipendente_per_ogni_partecipante(self):
+        self.prepara()
+        self.client.post('/admin/partecipanti/nuovo', data=self.persona(303))
+
+        class FormParser(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.forms = []
+                self.profondita = 0
+                self.annidati = False
+
+            def handle_starttag(self, tag, attrs):
+                if tag == 'form':
+                    self.annidati |= self.profondita > 0
+                    self.profondita += 1
+                    self.forms.append(dict(attrs))
+
+            def handle_endtag(self, tag):
+                if tag == 'form':
+                    self.profondita -= 1
+
+        parser = FormParser()
+        parser.feed(self.client.get('/admin/iscrizioni').get_data(as_text=True))
+        self.assertFalse(parser.annidati)
+        for codice in (101, 202, 303):
+            forms = [f for f in parser.forms if f.get('action') == f'/admin/partecipanti/{codice}/elimina']
+            self.assertEqual(len(forms), 1)
+            self.assertEqual(forms[0]['method'], 'post')
+            self.assertIn('return confirm(', forms[0]['onsubmit'])
+            self.assertIn(f'codice {codice}', forms[0]['onsubmit'])
+            self.assertIn('non può essere annullata', forms[0]['onsubmit'])
+
+    def test_elimina_permessi_metodo_e_id_inesistente(self):
+        self.prepara()
+        db.session.add(User(username='operatore', password=generate_password_hash('password')))
+        db.session.commit()
+        prima = {m: self.snapshot(m) for m in (Partecipante, Iscrizione, Laboratorio, User, SysOption)}
+        url = '/admin/partecipanti/101/elimina'
+        self.assertEqual(self.client.get(url).status_code, 405)
+        self.assertEqual(self.client.post('/admin/partecipanti/999/elimina').status_code, 404)
+        self.client.get('/logout')
+        self.assertEqual(self.client.post(url).status_code, 302)
+        self.client.post('/verifica_iscrizione', json={'codice_socio': 101})
+        self.client.post('/conferma_identita')
+        self.assertEqual(self.client.post(url).location, '/')
+        self.client.get('/logout')
+        self.client.post('/login', data={'username': 'operatore', 'passwd': 'password'})
+        self.assertEqual(self.client.post(url).location, '/')
+        self.assertEqual({m: self.snapshot(m) for m in prima}, prima)
+
+    def test_elimina_rollback_dopo_delete_iscrizione_e_partecipante(self):
+        self.prepara()
+        prima = {m: self.snapshot(m) for m in (Partecipante, Iscrizione, Laboratorio, User, SysOption)}
+
+        def fallisce():
+            # La prima DELETE è già stata inviata dalla route.
+            self.assertEqual(db.session.execute(text('SELECT COUNT(*) FROM iscrizioni WHERE partecipante = 101')).scalar(), 0)
+            db.session.flush()
+            self.assertEqual(db.session.execute(text('SELECT COUNT(*) FROM partecipanti WHERE id = 101')).scalar(), 0)
+            raise SQLAlchemyError('dettaglio interno da non esporre')
+
+        with patch.object(db.session, 'commit', side_effect=fallisce):
+            risposta = self.client.post('/admin/partecipanti/101/elimina', follow_redirects=True)
+        self.assertEqual(risposta.status_code, 200)
+        self.assertIn(b'Nessuna modifica salvata.', risposta.data)
+        self.assertNotIn(b'dettaglio interno', risposta.data)
+        self.assertNotIn(b'eliminato definitivamente', risposta.data)
+        self.assertEqual({m: self.snapshot(m) for m in prima}, prima)
+
+    def test_sessione_eliminata_non_puo_ricreare_iscrizione(self):
+        mattino, _ = self.prepara()
+        partecipante_client = app.test_client()
+        # Contesti separati: Flask-Login conserva current_user nel contesto applicativo.
+        with app.app_context():
+            partecipante_client.post('/verifica_iscrizione', json={'codice_socio': 101})
+            partecipante_client.post('/conferma_identita')
+            self.assertEqual(partecipante_client.get('/lista_laboratori/mattino').status_code, 200)
+        with app.app_context():
+            eliminazione = self.client.post('/admin/partecipanti/101/elimina')
+            self.assertEqual(eliminazione.status_code, 302)
+            self.assertTrue(eliminazione.location.endswith('/admin/iscrizioni'))
+            self.assertIsNone(db.session.get(Partecipante, 101))
+        with app.app_context():
+            risposta = partecipante_client.post('/laboratori/mattino/salva', json={'laboratorio_id': mattino})
+        self.assertEqual(risposta.status_code, 401)
+        self.assertIsNone(db.session.get(Partecipante, 101))
+        self.assertIsNone(Iscrizione.query.filter_by(partecipante=101).first())
 
 
 if __name__ == '__main__':
